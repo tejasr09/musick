@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="theme-color" content="#0b0a10">
+    <meta name="theme-color" content="#0b0b0e">
     <meta name="description" content="Musick — your music, on your terms.">
     <title>Musick</title>
     <link rel="stylesheet" href="styles.css">
@@ -13,19 +13,16 @@
   <body>
     <div class="app-shell">
       <aside class="sidebar">
-        <a class="wordmark" href="#" aria-label="Musick home"><span class="brand-mark">m</span>musick<span class="brand-period">.</span></a>
+        <a class="wordmark" href="#" aria-label="Musick home"><span class="brand-mark">m</span>musick<span class="brand-period">.</span><span class="storage-indicator" title="Local library available" aria-label="Local library available"></span></a>
         <nav class="primary-nav" aria-label="Main navigation">
           <button class="nav-link active" data-view="home"><span class="nav-icon">⌂</span>Home</button>
-          <button class="nav-link" data-view="search"><span class="nav-icon">⌕</span>Search</button>
-          <button class="nav-link" data-view="library"><span class="nav-icon">▤</span>Your library</button>
+          <button class="nav-link" data-view="library"><span class="nav-icon">▤</span>Library</button>
+          <button class="nav-link" data-view="playlists"><span class="nav-icon">▧</span>Playlists</button>
+          <button class="nav-link" data-view="favorites"><span class="nav-icon">♡</span>Favorites</button>
         </nav>
         <div class="sidebar-section">
           <div class="section-label"><span>Your playlists</span><button class="icon-button small" data-action="create-playlist" aria-label="Create playlist" title="Create playlist">＋</button></div>
           <div id="sidebar-playlists" class="playlist-nav"></div>
-        </div>
-        <div class="sidebar-bottom">
-          <span class="local-badge"><span></span> Your library stays on this device</span>
-          <span class="sidebar-version">Musick · open source</span>
         </div>
       </aside>
 
@@ -37,10 +34,13 @@
           </div>
           <label class="search-box" id="search-box">
             <span aria-hidden="true">⌕</span>
-            <input id="search-input" type="search" placeholder="What do you want to play?" autocomplete="off" aria-label="Search your music">
-            <kbd>/</kbd>
+            <input id="search-input" type="search" placeholder="Search tracks, artists, or local files..." autocomplete="off" aria-label="Search tracks, artists, or local files">
+            <kbd>⌘ K</kbd>
           </label>
-          <button class="profile-button" data-action="connections"><span class="profile-avatar">M</span><span id="profile-label">Connect services</span></button>
+          <div class="topbar-actions">
+            <button class="primary-button add-music-button" data-action="add-files"><span aria-hidden="true">＋</span> Add Music</button>
+            <button class="settings-button" data-action="connections" aria-label="Settings and connected services" title="Settings and connected services">⚙</button>
+          </div>
         </header>
 
         <section id="content" class="content-area" aria-live="polite"></section>
@@ -68,11 +68,11 @@
               </select>
             </div>
             <div class="eq-sliders">
-              <label><input type="range" min="-12" max="12" value="0" data-band="0" aria-label="60 Hz equalizer band"><span>60</span><small>Hz</small></label>
-              <label><input type="range" min="-12" max="12" value="0" data-band="1" aria-label="230 Hz equalizer band"><span>230</span><small>Hz</small></label>
-              <label><input type="range" min="-12" max="12" value="0" data-band="2" aria-label="910 Hz equalizer band"><span>910</span><small>Hz</small></label>
-              <label><input type="range" min="-12" max="12" value="0" data-band="3" aria-label="3.6 kHz equalizer band"><span>3.6k</span><small>Hz</small></label>
-              <label><input type="range" min="-12" max="12" value="0" data-band="4" aria-label="14 kHz equalizer band"><span>14k</span><small>Hz</small></label>
+              <label><output data-eq-value="0">0</output><input type="range" min="-12" max="12" value="0" data-band="0" aria-label="60 Hz equalizer band"><small>60 Hz</small></label>
+              <label><output data-eq-value="1">0</output><input type="range" min="-12" max="12" value="0" data-band="1" aria-label="230 Hz equalizer band"><small>230 Hz</small></label>
+              <label><output data-eq-value="2">0</output><input type="range" min="-12" max="12" value="0" data-band="2" aria-label="910 Hz equalizer band"><small>910 Hz</small></label>
+              <label><output data-eq-value="3">0</output><input type="range" min="-12" max="12" value="0" data-band="3" aria-label="3.6 kHz equalizer band"><small>3.6 kHz</small></label>
+              <label><output data-eq-value="4">0</output><input type="range" min="-12" max="12" value="0" data-band="4" aria-label="14 kHz equalizer band"><small>14 kHz</small></label>
             </div>
             <p class="eq-note">Applies to music playing in Musick.</p>
           </div>
@@ -96,9 +96,11 @@
         </div>
         <div class="player-tools">
           <button class="player-button lyrics-button" data-action="open-lyrics" aria-label="Open lyrics" title="Lyrics">♫</button>
-          <span class="volume-icon" aria-hidden="true">◖</span>
+          <button class="player-button volume-icon" data-action="toggle-mute" aria-label="Mute" title="Mute">◖</button>
           <input id="volume-control" type="range" min="0" max="1" step="0.01" value="0.8" aria-label="Volume">
+          <button class="player-button output-button" data-action="choose-output-device" aria-label="Choose audio output" title="Choose audio output">▣</button>
           <button class="player-button queue-button" data-action="show-queue" aria-label="Open library" title="Your library">▤</button>
+          <button class="player-button fullscreen-button" data-action="open-fullscreen-lyrics" aria-label="Open full-screen lyrics" title="Full-screen lyrics">⛶</button>
         </div>
         <audio id="audio" preload="metadata"></audio>
       </section>

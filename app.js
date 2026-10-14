@@ -465,7 +465,7 @@ function changeView(view, playlistId = null, addHistory = true) {
     historyIndex = historyStack.length - 1;
   }
   document.querySelectorAll(".nav-link").forEach(button => {
-    button.classList.toggle("active", button.dataset.view === view || (view === "playlist" && button.dataset.view === "library"));
+    button.classList.toggle("active", button.dataset.view === view || (view === "playlist" && button.dataset.view === "playlists"));
   });
   renderContent();
 }
@@ -474,6 +474,8 @@ function renderContent() {
   if (currentView !== "search") destroyYouTubePlayer();
   if (currentView === "home") renderHome();
   else if (currentView === "library") renderLibrary();
+  else if (currentView === "playlists") renderPlaylists();
+  else if (currentView === "favorites") renderFavorites();
   else if (currentView === "search") renderSearch();
   else if (currentView === "playlist") renderPlaylist();
   else if (currentView === "connections") renderConnections();
@@ -488,23 +490,21 @@ function renderHome() {
   const localTracks = tracks.filter(track => track.blob);
   const recent = localTracks.filter(track => track.lastPlayed).sort((a, b) => b.lastPlayed - a.lastPlayed).slice(0, 6);
   const recommendations = recommendTracks();
+  const libraryPreview = [...localTracks].sort((a, b) => (b.addedAt || 0) - (a.addedAt || 0)).slice(0, 8);
   content.innerHTML = `
-    <div class="welcome-row">
-      <div><span class="eyebrow">YOUR MUSIC, YOUR WAY</span><h1>Good music. No noise.</h1><p>Your collection, playlists, and sound — all in one place.</p></div>
-      <div class="button-row"><button class="secondary-button" data-action="connections">Connect a service</button><button class="primary-button" data-action="add-files">＋ Add music</button></div>
-    </div>
-    <section class="hero-card">
-      <div class="hero-copy"><span class="eyebrow">A HOME FOR YOUR MUSIC</span><h2>Press play on your own library.</h2><p>Add audio from your device. Your music stays yours — saved locally, with no upload and no tracking.</p></div>
-      <div class="hero-visual" aria-hidden="true">♫</div>
+    <section>
+      <div class="section-heading dashboard-heading"><div><span class="eyebrow">YOUR LISTENING</span><h1>Recently Played</h1></div></div>
+      ${recent.length ? `<div class="recent-grid">${recent.map(track => quickCard(track, "recent")).join("")}</div>` : `<div class="quiet-empty"><span class="quiet-empty-icon">♫</span><span>Tracks you play will appear here.</span></div>`}
     </section>
-    ${recent.length ? `<section><div class="section-heading"><h2>Pick up where you left off</h2><button class="quiet-button" data-view="library">Your library →</button></div><div class="quick-grid">${recent.map(track => quickCard(track, "recent")).join("")}</div></section>` : ""}
-    <section><div class="section-heading"><div><h2>Made for your library</h2><p>${localTracks.length ? "A little inspiration from your listening." : "Your personal picks get better as you listen."}</p></div></div>
-      ${recommendations.length ? `<div class="quick-grid">${recommendations.map(track => quickCard(track, "recommendation")).join("")}</div><p class="recommendation-note">Personalized from your listening history and library. Recommendations run on this device.</p>` : emptyState("Your next favorite is waiting", "Add some music and play a few tracks. Musick will use your own library and listening history to suggest what to hear next.", "Add music", "add-files")}
+    ${recommendations.length ? `<section><div class="section-heading"><div><h2>For you</h2><p>Picked from your local listening history</p></div></div><div class="quick-grid">${recommendations.map(track => quickCard(track, "recommendation")).join("")}</div></section>` : ""}
+    <section>
+      <div class="section-heading"><div><h2>Your Local Library</h2><p>${localTracks.length} ${localTracks.length === 1 ? "track" : "tracks"}</p></div><button class="quiet-button" data-view="library">View library →</button></div>
+      ${libraryPreview.length ? trackTable(libraryPreview) : `<div class="library-empty"><span>Your music, ready when you are.</span><button class="secondary-button" data-action="add-files">＋ Add music</button></div>`}
     </section>`;
 }
 
 function quickCard(track, context) {
-  return `<button class="quick-card" data-action="play-track" data-id="${escapeHTML(track.id)}" data-context="${context}" aria-label="Play ${escapeHTML(track.title)}">
+  return `<button class="quick-card ${context === "recent" ? "recent-card" : ""}" data-action="play-track" data-id="${escapeHTML(track.id)}" data-context="${context}" aria-label="Play ${escapeHTML(track.title)}">
     ${coverMarkup(track)}<span class="quick-card-copy"><strong>${escapeHTML(track.title)}</strong><span>${escapeHTML(track.artist)}</span></span><span class="quick-play" aria-hidden="true">▶</span>
   </button>`;
 }
@@ -522,6 +522,19 @@ function renderLibrary() {
     <section><div class="section-heading"><h2>Your playlists <span class="track-count">${playlists.length}</span></h2><button class="quiet-button" data-action="create-playlist">＋ Create playlist</button></div>
       ${playlists.length ? `<div class="quick-grid">${playlists.map(playlistCard).join("")}</div>` : `<p class="recommendation-note">Make a playlist, add tracks, and give it your own color.</p>`}
     </section>`;
+}
+
+function renderPlaylists() {
+  content.innerHTML = `
+    <div class="page-heading"><div><span class="eyebrow">YOUR COLLECTION</span><h1>Playlists</h1></div><button class="primary-button" data-action="create-playlist">＋ New playlist</button></div>
+    ${playlists.length ? `<div class="playlist-grid">${playlists.map(playlistCard).join("")}</div>` : `<div class="library-empty"><span>Create a playlist to collect your favorite tracks.</span><button class="secondary-button" data-action="create-playlist">＋ Create playlist</button></div>`}`;
+}
+
+function renderFavorites() {
+  const favorites = tracks.filter(track => track.blob && track.favorite).sort((a, b) => (b.lastPlayed || 0) - (a.lastPlayed || 0));
+  content.innerHTML = `
+    <div class="page-heading"><div><span class="eyebrow">SAVED TRACKS</span><h1>Favorites</h1></div></div>
+    ${favorites.length ? trackTable(favorites) : `<div class="library-empty"><span>Tracks you favorite will be collected here.</span><button class="quiet-button" data-view="library">Browse your library →</button></div>`}`;
 }
 
 function playlistCard(playlist) {
@@ -896,14 +909,15 @@ function renderPlaylist() {
 
 function trackTable(items, removable = false) {
   if (!items.length) return emptyState("No songs yet", "Add audio from your device to get your library started.");
-  return `<table class="track-table"><thead><tr><th>#</th><th>Title</th><th>Album</th><th>Plays</th><th></th></tr></thead><tbody>
+  return `<div class="track-table-wrap"><table class="track-table"><thead><tr><th>#</th><th>Title</th><th>Artist</th><th>Album</th><th>Date added</th><th>Duration</th><th></th></tr></thead><tbody>
     ${items.map((track, index) => `<tr class="track-row ${track.id === currentTrackId ? "current" : ""}" draggable="${removable ? "true" : "false"}" data-track-row="${escapeHTML(track.id)}" data-playlist-id="${removable ? escapeHTML(activePlaylistId) : ""}">
-      <td>${String(index + 1).padStart(2, "0")}</td>
-      <td><div class="track-title">${coverMarkup(track)}<span class="track-title-copy"><strong>${escapeHTML(track.title)}</strong><span>${escapeHTML(track.artist)}</span></span></div></td>
-      <td class="track-album">${escapeHTML(track.album || "—")}</td><td>${track.playCount || 0}</td>
+      <td class="track-position">${track.id === currentTrackId && !audio.paused ? `<span class="playing-indicator" aria-label="Now playing"><i></i><i></i><i></i></span>` : String(index + 1).padStart(2, "0")}</td>
+      <td><div class="track-title">${coverMarkup(track)}<span class="track-title-copy"><strong>${escapeHTML(track.title)}</strong></span></div></td>
+      <td class="track-artist">${escapeHTML(track.artist || "Unknown artist")}</td>
+      <td class="track-album">${escapeHTML(track.album || "—")}</td><td class="track-date">${track.addedAt ? new Date(track.addedAt).toLocaleDateString() : "—"}</td><td class="track-duration">${formatTime(track.duration)}</td>
       <td><div class="track-actions"><button class="favorite ${track.favorite ? "active" : ""}" data-action="favorite" data-id="${escapeHTML(track.id)}" aria-label="${track.favorite ? "Remove from" : "Add to"} favorites">${track.favorite ? "♥" : "♡"}</button>${removable ? `<button data-action="remove-from-playlist" data-id="${escapeHTML(track.id)}" aria-label="Remove from playlist" title="Remove from playlist">−</button>` : `<button data-action="track-menu" data-id="${escapeHTML(track.id)}" aria-label="Track options" title="Add to playlist">···</button>`}</div></td>
     </tr>`).join("")}
-  </tbody></table>`;
+  </tbody></table></div>`;
 }
 
 function renderConnections() {
@@ -1056,8 +1070,15 @@ function warnAudioGraphUnavailable(error) {
 
 function applyEqualizerFromControls() {
   filters.forEach((filter, index) => {
-    filter.gain.value = Number(document.querySelector(`[data-band="${index}"]`).value);
+    const value = Number(document.querySelector(`[data-band="${index}"]`).value);
+    filter.gain.value = value;
+    updateEqualizerValue(index, value);
   });
+}
+
+function updateEqualizerValue(index, value) {
+  const output = document.querySelector(`[data-eq-value="${index}"]`);
+  if (output) output.textContent = `${value > 0 ? "+" : ""}${value}`;
 }
 
 function applySavedEqualizer() {
@@ -1413,7 +1434,7 @@ async function importM3u(file) {
   else showToast(`Imported ${matched.length} ${matched.length === 1 ? "track" : "tracks"} from the playlist.`);
 }
 
-function handleAction(button) {
+async function handleAction(button) {
   const { action, id } = button.dataset;
   if (!action) return;
   if (action === "add-files") document.querySelector("#audio-files").click();
@@ -1533,10 +1554,42 @@ function handleAction(button) {
   else if (action === "reset-eq") {
     document.querySelectorAll("[data-band]").forEach(slider => { slider.value = "0"; });
     filters.forEach(filter => { filter.gain.value = 0; });
+    EQ_FREQUENCIES.forEach((_, index) => updateEqualizerValue(index, 0));
     saveEqualizer();
     document.querySelector("#eq-preset").value = "flat";
   }
   else if (action === "show-queue") changeView("library");
+  else if (action === "toggle-mute") {
+    audio.muted = !audio.muted;
+    button.classList.toggle("is-muted", audio.muted);
+    button.textContent = audio.muted ? "◖̸" : "◖";
+    button.setAttribute("aria-label", audio.muted ? "Unmute" : "Mute");
+    button.title = audio.muted ? "Unmute" : "Mute";
+  }
+  else if (action === "open-fullscreen-lyrics") {
+    openLyrics();
+    toggleFullscreen();
+  }
+  else if (action === "choose-output-device") {
+    const devices = navigator.mediaDevices;
+    if (typeof devices?.selectAudioOutput !== "function") {
+      showToast("Audio output selection is not supported in this browser.");
+      return;
+    }
+    try {
+      const device = await devices.selectAudioOutput();
+      await ensureAudioGraph();
+      if (typeof audioContext?.setSinkId !== "function") {
+        showToast("This browser cannot route equalized audio to a selected output device.");
+        return;
+      }
+      await audioContext.setSinkId(device.deviceId);
+      button.title = `Audio output: ${device.label || "selected device"}`;
+      showToast(`Audio output changed to ${device.label || "selected device"}.`);
+    } catch (error) {
+      showToast(`Could not change audio output: ${error.message}`);
+    }
+  }
   else if (action === "back" && historyIndex > 0) {
     historyIndex--;
     const state = historyStack[historyIndex];
@@ -1640,7 +1693,10 @@ document.querySelector("#search-input").addEventListener("input", event => {
 });
 
 document.addEventListener("keydown", event => {
-  if (event.key === "Enter" && event.target.id === "search-input" && currentView === "search" && searchSource === "youtube") {
+  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+    event.preventDefault();
+    document.querySelector("#search-input").focus();
+  } else if (event.key === "Enter" && event.target.id === "search-input" && currentView === "search" && searchSource === "youtube") {
     event.preventDefault();
     searchYouTubeVideos();
   } else if (event.key === "Enter" && event.target.id === "search-input" && currentView === "search" && searchSource === "archive") {
@@ -1657,6 +1713,12 @@ document.addEventListener("keydown", event => {
 
 document.querySelector("#volume-control").addEventListener("input", event => {
   audio.volume = Number(event.target.value);
+  audio.muted = false;
+  const muteButton = document.querySelector(".volume-icon");
+  muteButton.classList.remove("is-muted");
+  muteButton.textContent = "◖";
+  muteButton.setAttribute("aria-label", "Mute");
+  muteButton.title = "Mute";
   if (gainNode) gainNode.gain.value = 1;
 });
 
@@ -1667,7 +1729,9 @@ document.querySelector("#lyrics-seek-bar").addEventListener("input", event => {
 document.querySelectorAll("[data-band]").forEach(slider => slider.addEventListener("input", event => {
   ensureAudioGraph().catch(error => showToast(`Equalizer unavailable: ${error.message}`));
   const index = Number(event.target.dataset.band);
-  if (filters[index]) filters[index].gain.value = Number(event.target.value);
+  const value = Number(event.target.value);
+  if (filters[index]) filters[index].gain.value = value;
+  updateEqualizerValue(index, value);
   document.querySelector("#eq-preset").value = "custom";
   saveEqualizer();
 }));
@@ -1678,6 +1742,7 @@ document.querySelector("#eq-preset").addEventListener("change", event => {
   values.forEach((value, index) => {
     document.querySelector(`[data-band="${index}"]`).value = String(value);
     if (filters[index]) filters[index].gain.value = value;
+    updateEqualizerValue(index, value);
   });
   ensureAudioGraph().catch(error => showToast(`Equalizer unavailable: ${error.message}`));
   saveEqualizer();
