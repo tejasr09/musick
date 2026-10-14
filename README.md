@@ -12,6 +12,34 @@ npx serve .
 
 Opening `index.html` directly may also work, but a local web server is recommended for browser storage and audio compatibility.
 
+## Run with Docker
+
+Docker support is optional; the existing Node/static-server workflow above is unchanged. From the project folder, build and start the Nginx container:
+
+```powershell
+docker build -t musick:local .
+docker run --detach --name musick-local --publish 8080:80 musick:local
+```
+
+Open <http://localhost:8080> in your browser. Stop and remove the container when finished:
+
+```powershell
+docker stop musick-local
+docker rm musick-local
+```
+
+To enable optional YouTube keyword search, create the ignored `youtube-config.local.json` as described below, then run the container with this read-only bind mount:
+
+```powershell
+docker run --detach --name musick-local --publish 8080:80 `
+  --mount "type=bind,source=$((Resolve-Path .\youtube-config.local.json).Path),target=/usr/share/nginx/html/youtube-config.local.json,readonly" `
+  musick:local
+```
+
+The image builds and runs without this file. Do not add it to the image or commit it. The existing Supabase browser configuration and public publishable key are unchanged; Supabase remains hosted by Supabase, and no server-side Supabase key is included. For Google Cloud's website-referrer restriction, allow `http://localhost:8080/*` when using YouTube search in this container; the browser-visible API key still needs the existing API restriction to YouTube Data API v3.
+
+This container is only available while Docker is running on your computer; it does not publish Musick to the internet or keep it online when your computer or container is stopped. A public HTTPS deployment needs a separate hosting provider and domain, and its HTTPS site URL and callback/redirect URL must be configured in Supabase Auth's URL configuration and redirect allow list.
+
 ## What works
 
 - Import and play audio files from your device. Audio blobs and track details stay in the browser's IndexedDB; no audio is uploaded.
