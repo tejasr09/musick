@@ -54,7 +54,18 @@
             <div class="eq-panel-heading"><div><span class="eyebrow">YOUR SOUND</span><h2>Equalizer</h2></div><button class="icon-button small" data-action="reset-eq" aria-label="Reset equalizer" title="Reset equalizer">↺</button></div>
             <div class="eq-presets">
               <label for="eq-preset" class="visually-hidden">Equalizer preset</label>
-              <select id="eq-preset"><option value="custom">Custom</option><option value="flat">Flat</option><option value="bass">Bass boost</option><option value="vocal">Vocal</option><option value="treble">Treble boost</option></select>
+              <select id="eq-preset">
+                <option value="custom">Custom</option>
+                <optgroup label="Core">
+                  <option value="flat">Flat</option><option value="bass">Bass boost</option><option value="deep-bass">Deep bass</option><option value="vocal">Vocal</option><option value="treble">Treble boost</option>
+                </optgroup>
+                <optgroup label="Genres">
+                  <option value="pop">Pop</option><option value="rock">Rock</option><option value="classic-rock">Classic rock</option><option value="alternative-rock">Alternative rock</option><option value="metal">Metal</option><option value="classical">Classical</option><option value="jazz">Jazz</option><option value="country">Country</option><option value="r-and-b">R&amp;B</option><option value="trap">Trap</option><option value="electronic">Electronic</option><option value="acoustic">Acoustic</option>
+                </optgroup>
+                <optgroup label="Listening">
+                  <option value="podcast">Podcast &amp; speech</option><option value="movie">Movie</option><option value="gaming">Gaming</option>
+                </optgroup>
+              </select>
             </div>
             <div class="eq-sliders">
               <label><input type="range" min="-12" max="12" value="0" data-band="0" aria-label="60 Hz equalizer band"><span>60</span><small>Hz</small></label>

@@ -1,0 +1,21 @@
+Musick's local AAC-LC fallback uses Project Symphonia 0.6.1, distributed under
+the Mozilla Public License 2.0 (MPL-2.0). The bundled WebAssembly module is
+built from codec/Cargo.toml and codec/src/lib.rs with codec/Cargo.lock.
+
+Symphonia source and license:
+https://github.com/pdeljanov/Symphonia/tree/v0.6.1
+https://www.mozilla.org/en-US/MPL/2.0/
+
+The AAC decoder was ported and relicensed from NihAV with permission from
+Kostya Shishkov. See the upstream Symphonia AAC decoder README for attribution.
+
+The pinned WebAssembly build also incorporates the Rust crates listed in
+codec/Cargo.lock. Their declared licenses are MPL-2.0 for Symphonia crates,
+Apache-2.0 OR MIT for autocfg, bitflags, lazy_static, log, num-complex,
+num-traits, regex-lite, and smallvec, and Zlib OR Apache-2.0 OR MIT for
+bytemuck. Copies of the Apache-2.0, MIT, and Zlib license texts for the
+permissively licensed dependencies are in vendor/licenses/.
+
+The Musick wrapper code in codec/src/lib.rs is licensed under Musick's MIT
+license. The Symphonia dependency remains MPL-2.0; see the license text in
+symphonia-LICENSE.txt and the pinned dependency versions in codec/Cargo.lock.

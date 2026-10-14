@@ -6,6 +6,7 @@ supabase/.temp/
 supabase/.branches/
 youtube-config.local.json
 node_modules/
+codec/target/
 dist/
 coverage/
 .DS_Store

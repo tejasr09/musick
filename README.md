@@ -1,6 +1,6 @@
 # Musick
 
-Musick is a lightweight, open-source music-library web app with a black-and-purple interface. It is built with plain HTML, CSS, and JavaScript: no framework, build step, analytics, or third-party runtime dependencies.
+Musick is a lightweight, open-source music-library web app with a black-and-purple interface. It is built with plain HTML, CSS, and JavaScript: no framework, build step, or analytics. Small bundled ALAC and AAC-LC decoders are loaded only when browser-native `.m4a` playback fails.
 
 ## Run it
 
@@ -18,11 +18,23 @@ Opening `index.html` directly may also work, but a local web server is recommend
 - Create, rename, recolor, reorder, export, and delete playlists. Import `.m3u`/`.m3u8` playlists that match files already in your local library.
 - Search your local tracks and get on-device recommendations based on your own favorites and listening history.
 - Search YouTube videos through the official API when configured, paste a YouTube video link without an API key, or search Internet Archive audio without an API key. YouTube and Archive playback stay in their respective official embedded players.
-- Adjust volume, shuffle and repeat, seek through tracks, favorite songs, and use the five-band Web Audio equalizer, with presets.
+- Adjust volume, shuffle and repeat, seek through tracks, favorite songs, and use the five-band Web Audio equalizer with genre and listening presets.
 - Display synchronized lyrics from a user-supplied `.lrc` file and use the lyrics view as a full-screen player.
 - Use keyboard `/` to focus search.
 
-Playback uses the original local audio file without uploading or transcoding it; available formats and quality depend on browser codec and device support. Musick reports unsupported formats rather than silently treating them as playable. If Web Audio/equalizer setup is unavailable, local playback falls back to the browser's direct audio path. Browser audio processing and the equalizer do not promise bit-perfect output.
+Local audio files stay on the device and are never uploaded. Musick tries native browser playback first. A local WebAssembly fallback handles ALAC-in-M4A in 16-bit or 24-bit mono/stereo and retains its PCM bit depth, and AAC-LC-in-M4A in mono/stereo, decoded to 32-bit float WAV at the source sample rate. Float PCM avoids an additional 16-bit conversion; it does not restore information lost in lossy AAC. AAC fallback is limited to Symphonia's AAC-LC profile; other AAC profiles and M4A codecs are not supported by the fallback. Decoder input is capped at 512 MB and decoded WAV output at 256 MB. Unsupported files are reported rather than silently treated as playable. If Web Audio/equalizer setup is unavailable, local playback falls back to the browser's direct audio path. Browser audio processing and the equalizer do not promise bit-perfect output.
+
+The equalizer adds genre and listening presets inspired by the style of FxSound's community preset collection; Musick's curves are its own five-band settings.
+
+The optional ALAC decoder in [`vendor/`](./vendor/) is `@mgz-dev/alac` 0.1.1 (MIT), pinned to upstream commit [`7ad4e9b`](https://github.com/marcogomez/alac/tree/7ad4e9b107a2175ffaaef1a4827988c1a9da906a); its license and third-party notices are included. It is loaded locally only when native playback fails.
+
+The optional AAC-LC fallback is built from the pure-Rust Symphonia 0.6.1 decoder, which is MPL-2.0-licensed and remains separate from Musick's MIT-licensed wrapper and application. Its notice, license, and transitive dependency license texts are in [`vendor/`](./vendor/). The prebuilt decoder is included; rebuilding it requires Rust and the `wasm32-unknown-unknown` target:
+
+```powershell
+rustup target add wasm32-unknown-unknown
+cargo build --manifest-path .\codec\Cargo.toml --release --target wasm32-unknown-unknown
+Copy-Item .\codec\target\wasm32-unknown-unknown\release\musick_aac_decoder.wasm .\vendor\m4a-aac.wasm
+```
 
 ## Third-party music services
 

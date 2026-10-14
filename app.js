@@ -7,6 +7,28 @@ const PLAYLISTS_KEY = "musick-playlists-v1";
 const EQ_KEY = "musick-equalizer-v1";
 const SESSION_KEY = "musick-supabase-session-v1";
 const EQ_FREQUENCIES = [60, 230, 910, 3600, 14000];
+const EQ_PRESETS = {
+  flat: [0, 0, 0, 0, 0],
+  bass: [7, 5, 1, -1, 0],
+  "deep-bass": [10, 4, -1, 0, -1],
+  vocal: [-2, 1, 4, 3, 1],
+  treble: [-1, 0, 1, 4, 6],
+  pop: [3, 2, 0, 3, 2],
+  rock: [5, 3, 0, 4, 2],
+  "classic-rock": [4, 2, 0, 3, 1],
+  "alternative-rock": [4, 2, -1, 4, 3],
+  metal: [5, 2, -1, 4, 4],
+  classical: [-1, 0, 2, 3, 2],
+  jazz: [2, 1, -1, 2, 3],
+  country: [3, 1, 1, 3, 2],
+  "r-and-b": [5, 4, 0, 3, 3],
+  trap: [7, 5, 1, 3, 4],
+  electronic: [6, 3, -1, 2, 4],
+  acoustic: [1, 1, 2, 3, 1],
+  podcast: [-3, 0, 4, 3, -1],
+  movie: [4, 2, 1, 3, 2],
+  gaming: [2, 0, 1, 5, 3]
+};
 const COVER_PALETTES = [
   ["#805ba9", "#33213f"], ["#397c78", "#183d4c"], ["#aa6957", "#4f293c"],
   ["#5364a0", "#26253f"], ["#9b7950", "#473324"], ["#98658e", "#492b54"]
@@ -1084,11 +1106,18 @@ async function playTrack(id, collection = tracks) {
       await graphReady;
     } catch (error) {
       if (requestId !== playbackRequest) return;
+      if (isM4aTrack(track) && isUnsupportedAudioError(error)) {
+        try {
+          await playM4aFallback(track, requestId);
+          return;
+        } catch (fallbackError) {
+          if (requestId !== playbackRequest) return;
+          error = fallbackError;
+        }
+      }
       showToast(playbackErrorMessage(error));
       console.error("Track playback failed.", error);
-      if (error.name === "NotSupportedError" || audio.error?.code === 4) {
-        clearFailedTrackPlayback();
-      }
+      clearFailedTrackPlayback();
     }
     syncNowPlaying();
     return;
@@ -1097,7 +1126,7 @@ async function playTrack(id, collection = tracks) {
   let nextUrl;
   try {
     ensureAudioGraph();
-    nextUrl = URL.createObjectURL(track.blob);
+    nextUrl = URL.createObjectURL(playbackBlobForTrack(track));
     audio.src = nextUrl;
     currentTrackId = id;
     const playRequest = audio.play();
@@ -1105,19 +1134,18 @@ async function playTrack(id, collection = tracks) {
     if (oldUrl && oldUrl !== nextUrl) URL.revokeObjectURL(oldUrl);
     await playRequest;
     if (requestId !== playbackRequest) return;
-    track.playCount = (track.playCount || 0) + 1;
-    track.lastPlayed = Date.now();
-    syncNowPlaying();
-    renderContent();
-    if (lyricsView.classList.contains("open")) updateLyricsDisplay();
-    try {
-      await persistTrack(track);
-    } catch (error) {
-      showToast(`Playback started, but listening history could not be saved: ${error.message}`);
-      console.error("Could not persist playback history.", error);
-    }
+    await recordTrackPlayback(track);
   } catch (error) {
     if (requestId !== playbackRequest) return;
+    if (isM4aTrack(track) && isUnsupportedAudioError(error)) {
+      try {
+        await playM4aFallback(track, requestId);
+        return;
+      } catch (fallbackError) {
+        if (requestId !== playbackRequest) return;
+        error = fallbackError;
+      }
+    }
     showToast(playbackErrorMessage(error));
     console.error("Track playback failed.", error);
     if (currentTrackId === id) {
@@ -1125,6 +1153,42 @@ async function playTrack(id, collection = tracks) {
     } else if (nextUrl && nextUrl !== oldUrl) {
       URL.revokeObjectURL(nextUrl);
     }
+  }
+}
+
+function isM4aTrack(track) {
+  return /\.m4a$/i.test(track.fileName || "");
+}
+
+function isUnsupportedAudioError(error) {
+  return error.name === "NotSupportedError" || audio.error?.code === 4;
+}
+
+async function playM4aFallback(track, requestId) {
+  showToast("Preparing M4A playback…");
+  const { decodeM4aToWavBlob } = await import("./m4a-playback.js");
+  const decodedWav = await decodeM4aToWavBlob(track.blob);
+  if (requestId !== playbackRequest) return;
+  const previousUrl = currentObjectUrl;
+  const decodedUrl = URL.createObjectURL(decodedWav);
+  audio.src = decodedUrl;
+  currentObjectUrl = decodedUrl;
+  if (previousUrl && previousUrl !== decodedUrl) URL.revokeObjectURL(previousUrl);
+  await audio.play();
+  if (requestId === playbackRequest) await recordTrackPlayback(track);
+}
+
+async function recordTrackPlayback(track) {
+  track.playCount = (track.playCount || 0) + 1;
+  track.lastPlayed = Date.now();
+  syncNowPlaying();
+  renderContent();
+  if (lyricsView.classList.contains("open")) updateLyricsDisplay();
+  try {
+    await persistTrack(track);
+  } catch (error) {
+    showToast(`Playback started, but listening history could not be saved: ${error.message}`);
+    console.error("Could not persist playback history.", error);
   }
 }
 
@@ -1140,13 +1204,20 @@ function clearFailedTrackPlayback() {
 }
 
 function playbackErrorMessage(error) {
-  if (error.name === "NotSupportedError" || audio.error?.code === 4) {
+  if (isUnsupportedAudioError(error)) {
+    const track = tracks.find(item => item.id === currentTrackId);
+    if (isM4aTrack(track)) return "This .m4a could not be decoded. Musick's fallback supports mono/stereo ALAC and AAC-LC; other AAC profiles, codecs, or channel layouts may require browser-native support. The original file is unchanged.";
     return "This browser cannot play this audio format. Try a browser-supported MP3, WAV, AAC, or Ogg file.";
   }
   if (error.name === "NotAllowedError") {
     return "The browser blocked playback. Press Play again to allow audio.";
   }
   return `Could not play this track: ${error.message}`;
+}
+
+function playbackBlobForTrack(track) {
+  if (!/\.m4a$/i.test(track.fileName || "") || track.blob.type.toLowerCase() === "audio/mp4") return track.blob;
+  return new Blob([track.blob], { type: "audio/mp4" });
 }
 
 function getQueue() {
@@ -1202,6 +1273,9 @@ async function importAudioFiles(fileList) {
       lyrics: ""
     };
     try {
+      if (/\.m4a$/i.test(file.name) && file.type.toLowerCase() !== "audio/mp4") {
+        track.blob = new Blob([file], { type: "audio/mp4" });
+      }
       await persistTrack(track);
       imported++;
     } catch (error) {
@@ -1599,11 +1673,7 @@ document.querySelectorAll("[data-band]").forEach(slider => slider.addEventListen
 }));
 
 document.querySelector("#eq-preset").addEventListener("change", event => {
-  const presets = {
-    flat: [0, 0, 0, 0, 0], bass: [7, 5, 1, -1, 0],
-    vocal: [-2, 1, 4, 3, 1], treble: [-1, 0, 1, 4, 6]
-  };
-  const values = presets[event.target.value];
+  const values = EQ_PRESETS[event.target.value];
   if (!values) return;
   values.forEach((value, index) => {
     document.querySelector(`[data-band="${index}"]`).value = String(value);
