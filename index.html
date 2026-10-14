@@ -118,17 +118,19 @@
         <button class="lyrics-fullscreen" data-action="fullscreen" title="Full screen">⛶ <span>Full screen</span></button>
       </div>
       <div class="lyrics-content">
-        <div class="lyrics-art" id="lyrics-art"><span>m.</span></div>
+        <div class="lyrics-art" id="lyrics-art"><img id="lyrics-art-image" alt="" hidden><span>m.</span></div>
         <div class="lyrics-copy">
           <span class="eyebrow">LYRICS</span>
           <h1 id="lyrics-song-title">Your music, your words.</h1>
           <p id="lyrics-artist"></p>
+          <p id="lyrics-artwork-status" class="lyrics-artwork-status" aria-live="polite"></p>
+          <a id="lyrics-artwork-source" class="lyrics-artwork-source" target="_blank" rel="noopener noreferrer" hidden>Artwork source</a>
           <div id="lyrics-lines" class="lyrics-lines"></div>
           <div class="lyrics-actions">
             <button class="secondary-button" data-action="add-lyrics">＋ Add .lrc lyrics</button>
             <button class="secondary-button" data-action="verify-lyrics">Verify with Musixmatch</button>
           </div>
-          <p class="lyrics-disclaimer">Lyrics are supplied by you. Musixmatch verification requires its approved API access.</p>
+          <p class="lyrics-disclaimer">Artwork lookup searches Apple Music using the track name and artist; audio stays on this device. Lyrics are supplied by you. Musixmatch verification requires its approved API access.</p>
         </div>
       </div>
       <section class="lyrics-player" aria-label="Full screen music controls">
@@ -144,5 +146,20 @@
         </div>
       </section>
     </section>
+    <dialog id="track-edit-dialog" class="track-edit-dialog" aria-labelledby="track-edit-heading">
+      <form id="track-edit-form">
+        <span class="eyebrow">LOCAL LIBRARY</span>
+        <h2 id="track-edit-heading">Edit track details</h2>
+        <label for="track-edit-title">Track name</label>
+        <input id="track-edit-title" name="title" type="text" maxlength="200" required>
+        <label for="track-edit-artist">Artist</label>
+        <input id="track-edit-artist" name="artist" type="text" maxlength="200" required>
+        <p id="track-edit-feedback" class="track-edit-feedback" role="status"></p>
+        <div class="track-edit-actions">
+          <button class="secondary-button" type="button" data-action="close-track-edit">Cancel</button>
+          <button class="primary-button" type="submit">Save changes</button>
+        </div>
+      </form>
+    </dialog>
   </body>
 </html>

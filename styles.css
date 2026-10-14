@@ -98,6 +98,7 @@ button { cursor: pointer; }
 .quick-card-copy span { margin-top: 4px; color: var(--muted); font-size: 10px; }
 .quick-play { margin-left: auto; color: #bd9bff; font-size: 16px; }
 .cover-art { position: relative; display: grid; flex: 0 0 auto; place-items: center; overflow: hidden; border-radius: 8px; background: linear-gradient(140deg, var(--cover-a,#634b8a), var(--cover-b,#22202d)); color: rgba(255,255,255,.94); font-weight: 300; }
+.cover-art > img { position: absolute; z-index: 0; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 .cover-art::after { position: absolute; right: -20%; bottom: -54%; width: 95%; aspect-ratio: 1; border: 1px solid rgba(255,255,255,.17); border-radius: 50%; box-shadow: 0 0 0 13px rgba(255,255,255,.04), 0 0 0 27px rgba(255,255,255,.035); content: ""; }
 .cover-art span { position: relative; z-index: 1; }
 .empty-state { display: grid; min-height: 185px; place-items: center; padding: 25px; border: 1px dashed rgba(255,255,255,.13); border-radius: 11px; background: rgba(255,255,255,.018); text-align: center; }
@@ -171,7 +172,7 @@ button { cursor: pointer; }
 .track-table { width: 100%; border-collapse: collapse; }
 .track-table th { padding: 0 10px 12px; border-bottom: 1px solid var(--line); color: var(--subtle); font-size: 9px; font-weight: 600; letter-spacing: .8px; text-align: left; text-transform: uppercase; white-space: nowrap; }
 .track-table th:first-child { width: 43px; }
-.track-table th:last-child { width: 76px; text-align: right; }
+.track-table th:last-child { width: 100px; text-align: right; }
 .track-row { height: 63px; color: #c2c0c8; transition: background .16s; }
 .track-row:hover { background: rgba(255,255,255,.035); }
 .track-row.current { background: rgba(139,92,246,.075); color: #e4dcff; }
@@ -288,20 +289,29 @@ input[type="range"] { height: 3px; accent-color: #b390fa; cursor: pointer; }
 .eq-note { margin: 5px 0 0; color: #837c8c; font-size: 9px; }
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; clip-path: inset(50%); }
 
-.lyrics-view { position: fixed; z-index: 20; inset: 0; display: none; overflow: auto; background: radial-gradient(ellipse at 20% 15%, rgba(139,87,170,.36), transparent 42%), radial-gradient(ellipse at 90% 84%, rgba(76,47,103,.3), transparent 44%), #100e16; }
+.lyrics-view { --lyric-color-a: #885cab; --lyric-color-b: #362648; position: fixed; z-index: 20; isolation: isolate; inset: 0; display: none; overflow: auto; background: #100e16; }
 .lyrics-view.open { display: block; }
-.lyrics-topbar { position: sticky; z-index: 1; top: 0; display: grid; height: 76px; grid-template-columns: 1fr 2fr 1fr; align-items: center; padding: 0 28px; background: rgba(16,14,22,.65); backdrop-filter: blur(14px); }
+.lyrics-view::before, .lyrics-view::after { position: fixed; z-index: 0; inset: -35%; pointer-events: none; content: ""; }
+.lyrics-view::before { background: radial-gradient(ellipse at 22% 24%, color-mix(in srgb, var(--lyric-color-a) 75%, transparent), transparent 36%), radial-gradient(ellipse at 76% 72%, color-mix(in srgb, var(--lyric-color-b) 82%, transparent), transparent 40%), radial-gradient(ellipse at 52% 48%, rgba(108,74,152,.32), transparent 48%); filter: blur(40px); animation: lyrics-color-drift 26s ease-in-out infinite alternate; }
+.lyrics-view::after { background: radial-gradient(ellipse at 70% 20%, color-mix(in srgb, var(--lyric-color-b) 48%, transparent), transparent 34%), radial-gradient(ellipse at 27% 78%, color-mix(in srgb, var(--lyric-color-a) 44%, transparent), transparent 37%); filter: blur(56px); opacity: .72; animation: lyrics-color-drift-alt 32s ease-in-out infinite alternate; }
+@keyframes lyrics-color-drift { from { transform: translate3d(-4%, -3%, 0) rotate(-4deg) scale(.95); } to { transform: translate3d(5%, 4%, 0) rotate(8deg) scale(1.08); } }
+@keyframes lyrics-color-drift-alt { from { transform: translate3d(5%, 2%, 0) rotate(5deg) scale(1.02); } to { transform: translate3d(-5%, -4%, 0) rotate(-7deg) scale(.94); } }
+.lyrics-topbar { position: sticky; z-index: 2; top: 0; display: grid; height: 76px; grid-template-columns: 1fr 2fr 1fr; align-items: center; padding: 0 28px; background: rgba(16,14,22,.45); backdrop-filter: blur(14px); }
 .lyrics-heading { display: grid; justify-items: center; gap: 5px; color: #f0eaf6; font-size: 11px; }
 .lyrics-fullscreen { justify-self: end; padding: 8px 11px; border: 1px solid var(--line); border-radius: 6px; background: rgba(255,255,255,.04); color: #d9d0e4; font-size: 11px; }
 .lyrics-fullscreen:hover { background: rgba(255,255,255,.1); }
-.lyrics-content { display: grid; width: min(1060px, calc(100% - 60px)); min-height: calc(100vh - 76px); grid-template-columns: minmax(260px, .82fr) minmax(300px, 1fr); align-items: center; gap: clamp(40px, 9vw, 120px); margin: 0 auto; padding: 20px 0 60px; }
-.lyrics-art { position: relative; display: grid; width: min(100%,400px); aspect-ratio: 1; place-items: center; overflow: hidden; border: 1px solid rgba(255,255,255,.16); border-radius: 18px; background: linear-gradient(145deg,#885cab,#362648 78%); box-shadow: 0 30px 100px #0007; color: #f0dfff; font-size: clamp(110px,18vw,200px); font-weight: 250; }
+.lyrics-content { position: relative; z-index: 1; display: grid; width: min(1060px, calc(100% - 60px)); min-height: calc(100vh - 76px); grid-template-columns: minmax(260px, .82fr) minmax(300px, 1fr); align-items: center; gap: clamp(40px, 9vw, 120px); margin: 0 auto; padding: 20px 0 60px; }
+.lyrics-art { position: relative; display: grid; width: min(100%,400px); aspect-ratio: 1; place-items: center; overflow: hidden; border: 1px solid rgba(255,255,255,.16); border-radius: 18px; background: linear-gradient(145deg,var(--lyric-color-a),var(--lyric-color-b) 78%); box-shadow: 0 30px 100px #0007; color: #f0dfff; font-size: clamp(110px,18vw,200px); font-weight: 250; }
 .lyrics-art::before, .lyrics-art::after { position: absolute; width: 70%; aspect-ratio: 1; border: 1px solid #ffffff2b; border-radius: 50%; content: ""; }
 .lyrics-art::after { width: 49%; border-color: #ffffff45; }
+.lyrics-art > img { position: absolute; z-index: 0; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 .lyrics-art span { z-index: 1; }
 .lyrics-copy { max-width: 500px; padding: 25px 0; }
 .lyrics-copy h1 { margin: 10px 0 5px; font-size: clamp(27px,4vw,45px); letter-spacing: -1.5px; }
-.lyrics-copy > p:not(.lyrics-disclaimer) { margin: 0 0 27px; color: #b7aabe; font-size: 13px; }
+.lyrics-copy > p:not(.lyrics-disclaimer) { margin: 0 0 12px; color: #d2c9dc; font-size: 13px; }
+.lyrics-artwork-status { min-height: 14px; color: #c0b4ce; font-size: 10px !important; }
+.lyrics-artwork-source { display: inline-block; margin: -4px 0 17px; color: #ded0f2; font-size: 9px; text-underline-offset: 3px; }
+.lyrics-artwork-source[hidden] { display: none; }
 .lyrics-lines { display: grid; max-height: 38vh; gap: 14px; overflow-y: auto; padding: 4px 0; mask-image: linear-gradient(transparent,#000 8%,#000 92%,transparent); }
 .lyric-line { width: fit-content; max-width: 100%; padding: 3px 0; border: 0; background: transparent; color: #8f8799; font-size: clamp(17px,2.2vw,24px); font-weight: 640; line-height: 1.35; text-align: left; transition: color .2s, transform .2s; }
 .lyric-line.active { color: #fff; transform: translateX(4px); }
@@ -312,6 +322,21 @@ input[type="range"] { height: 3px; accent-color: #b390fa; cursor: pointer; }
 .lyrics-timeline { display: flex; width: 100%; align-items: center; gap: 8px; color: #9d95a6; font-size: 9px; font-variant-numeric: tabular-nums; }
 .lyrics-timeline input { width: 100%; }
 body.fullscreen-lyrics .lyrics-view { background-color: #100e16; }
+body.fullscreen-lyrics .lyrics-copy { text-shadow: 0 2px 18px rgba(0,0,0,.35); }
+.lyrics-player { z-index: 3; background: rgba(20,18,26,.72); }
+.track-edit-dialog { width: min(440px,calc(100% - 28px)); padding: 0; border: 1px solid rgba(255,255,255,.12); border-radius: 15px; background: #17151e; color: #f5f3f8; box-shadow: 0 24px 90px #000b; }
+.track-edit-dialog::backdrop { background: rgba(5,4,8,.72); backdrop-filter: blur(5px); }
+.track-edit-dialog form { display: grid; gap: 10px; padding: 23px; }
+.track-edit-dialog h2 { margin: 0 0 6px; font-size: 19px; letter-spacing: -.5px; }
+.track-edit-dialog label { margin-top: 3px; color: #c6c0cf; font-size: 11px; }
+.track-edit-dialog input { width: 100%; height: 39px; padding: 0 11px; border: 1px solid var(--line); border-radius: 7px; background: #100f15; color: #f5f3f8; font-size: 12px; }
+.track-edit-feedback { min-height: 14px; margin: 0; color: #f0a4a4; font-size: 10px; }
+.track-edit-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 5px; }
+.track-edit-dialog button:disabled { cursor: progress; opacity: .65; }
+.track-edit-dialog:not([open]) { display: none; }
+@media (prefers-reduced-motion: reduce) {
+  .lyrics-view::before, .lyrics-view::after { animation: none; }
+}
 
 @media (min-width: 1500px) { .content-area { padding-right: 55px; padding-left: 55px; } }
 @media (max-width: 920px) {

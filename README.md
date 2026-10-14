@@ -43,11 +43,12 @@ This container is only available while Docker is running on your computer; it do
 ## What works
 
 - Import and play audio files from your device. Audio blobs and track details stay in the browser's IndexedDB; no audio is uploaded.
+- Edit a local track's title and artist. When a track is played, Musick can search Apple Music's public Search API for a matching cover; only the title and artist are sent for that lookup, and audio remains local. Matching artwork and its sampled colors are cached with the local track, and the lyrics view links to the Apple Music result.
 - Create, rename, recolor, reorder, export, and delete playlists. Import `.m3u`/`.m3u8` playlists that match files already in your local library.
 - Search your local tracks and get on-device recommendations based on your own favorites and listening history.
 - Search YouTube videos through the official API when configured, paste a YouTube video link without an API key, or search Internet Archive audio without an API key. YouTube and Archive playback stay in their respective official embedded players.
 - Adjust volume, shuffle and repeat, seek through tracks, favorite songs, and use the five-band Web Audio equalizer with genre and listening presets.
-- Display synchronized lyrics from a user-supplied `.lrc` file and use the lyrics view as a full-screen player.
+- Display synchronized lyrics from a user-supplied `.lrc` file and use the lyrics view as a full-screen player with a moving background colored from the matching cover art (or the local generated cover when none is found).
 - Use keyboard `/` to focus search.
 
 Local audio files stay on the device and are never uploaded. Musick tries native browser playback first. A local WebAssembly fallback handles ALAC-in-M4A in 16-bit or 24-bit mono/stereo and retains its PCM bit depth, and AAC-LC-in-M4A in mono/stereo, decoded to 32-bit float WAV at the source sample rate. Float PCM avoids an additional 16-bit conversion; it does not restore information lost in lossy AAC. AAC fallback is limited to Symphonia's AAC-LC profile; other AAC profiles and M4A codecs are not supported by the fallback. Decoder input is capped at 512 MB and decoded WAV output at 256 MB. Unsupported files are reported rather than silently treated as playable. If Web Audio/equalizer setup is unavailable, local playback falls back to the browser's direct audio path. Browser audio processing and the equalizer do not promise bit-perfect output.

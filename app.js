@@ -64,6 +64,8 @@ let youtubePlayerApiPromise;
 let archiveSearch = { status: "idle", results: [], error: "", query: "", selectedId: "" };
 let archiveSearchController;
 let archiveSearchRequest = 0;
+let artworkLookupRequest = 0;
+let editingTrackId = null;
 let toastTimer;
 let currentObjectUrl = null;
 let audioContext;
@@ -364,6 +366,8 @@ function formatTime(seconds) {
 }
 
 function paletteFor(track) {
+  if (Array.isArray(track.coverPalette) && track.coverPalette.length === 2
+    && track.coverPalette.every(color => /^#[\da-f]{6}$/i.test(color))) return track.coverPalette;
   let hash = 0;
   for (const character of track.id) hash = (hash * 31 + character.charCodeAt(0)) | 0;
   return COVER_PALETTES[Math.abs(hash) % COVER_PALETTES.length];
@@ -377,7 +381,168 @@ function playlistPalette(playlist) {
 function coverMarkup(track, className = "cover-art") {
   const [first, second] = paletteFor(track);
   const initial = (track.title || "♪").trim().charAt(0).toUpperCase();
-  return `<div class="${className}" style="--cover-a:${first};--cover-b:${second}" aria-hidden="true"><span>${escapeHTML(initial)}</span></div>`;
+  const artwork = safeArtworkUrl(track.coverArtUrl);
+  return `<div class="${className}" style="--cover-a:${first};--cover-b:${second}" aria-hidden="true">${artwork ? `<img src="${escapeHTML(artwork)}" alt="" loading="lazy">` : `<span>${escapeHTML(initial)}</span>`}</div>`;
+}
+
+function safeArtworkUrl(value) {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && /^is\d+-ssl\.mzstatic\.com$/i.test(url.hostname) ? url.href : "";
+  } catch {
+    return "";
+  }
+}
+
+function artworkPaletteUrl(value) {
+  return value.replace(/\/\d+x\d+bb(?=\.[a-z]+(?:$|\?))/i, "/300x300bb");
+}
+
+function normalizeArtworkText(value) {
+  return String(value || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+function selectArtworkResult(results, track) {
+  const title = normalizeArtworkText(track.title);
+  const artist = normalizeArtworkText(track.artist);
+  if (!title || !artist) return null;
+  const scored = results.map(result => {
+    const candidateTitle = normalizeArtworkText(result.trackName);
+    const candidateArtist = normalizeArtworkText(result.artistName);
+    const titleScore = candidateTitle === title ? 5 : candidateTitle.includes(title) || title.includes(candidateTitle) ? 3 : 0;
+    const artistScore = candidateArtist === artist ? 5 : candidateArtist.includes(artist) || artist.includes(candidateArtist) ? 3 : 0;
+    return { result, score: titleScore + artistScore, titleScore, artistScore };
+  }).sort((left, right) => right.score - left.score
+    || right.artistScore - left.artistScore || right.titleScore - left.titleScore);
+  const match = scored[0];
+  return match && match.score >= 8 && match.titleScore >= 3 && match.artistScore >= 3 ? match.result : null;
+}
+
+async function extractArtworkPalette(imageUrl) {
+  const response = await fetch(imageUrl, { mode: "cors" });
+  if (!response.ok) throw new Error(`Artwork image returned HTTP ${response.status}.`);
+  const bitmap = await createImageBitmap(await response.blob());
+  const canvas = document.createElement("canvas");
+  canvas.width = 32;
+  canvas.height = 32;
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  if (!context) throw new Error("Could not read the artwork colors.");
+  context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  bitmap.close();
+  const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+  const colors = new Map();
+  for (let index = 0; index < pixels.length; index += 4) {
+    const [red, green, blue, alpha] = pixels.slice(index, index + 4);
+    if (alpha < 180) continue;
+    const key = [red, green, blue].map(value => Math.round(value / 32) * 32).join(",");
+    const bucket = colors.get(key) || { red: 0, green: 0, blue: 0, count: 0 };
+    bucket.red += red;
+    bucket.green += green;
+    bucket.blue += blue;
+    bucket.count++;
+    colors.set(key, bucket);
+  }
+  const ranked = [...colors.values()].map(color => {
+    const rgb = [color.red, color.green, color.blue].map(value => Math.round(value / color.count));
+    const saturation = Math.max(...rgb) - Math.min(...rgb);
+    return { rgb, score: color.count * (0.45 + saturation / 255) };
+  }).sort((left, right) => right.score - left.score);
+  if (!ranked.length) throw new Error("The artwork did not contain readable colors.");
+  const toHex = rgb => `#${rgb.map(value => value.toString(16).padStart(2, "0")).join("")}`;
+  const first = ranked[0].rgb;
+  const second = ranked.find(color => Math.max(...color.rgb.map((value, index) => Math.abs(value - first[index]))) > 48)?.rgb
+    || first.map(value => Math.max(0, Math.round(value * 0.62)));
+  return [toHex(first), toHex(second)];
+}
+
+function updateLyricsArtwork(track, status = "") {
+  const art = document.querySelector("#lyrics-art");
+  const image = document.querySelector("#lyrics-art-image");
+  const source = document.querySelector("#lyrics-artwork-source");
+  const statusElement = document.querySelector("#lyrics-artwork-status");
+  const [first, second] = paletteFor(track);
+  lyricsView.style.setProperty("--lyric-color-a", first);
+  lyricsView.style.setProperty("--lyric-color-b", second);
+  art.style.background = `linear-gradient(145deg,${first},${second})`;
+  const artwork = safeArtworkUrl(track.coverArtUrl);
+  image.hidden = !artwork;
+  if (artwork && image.src !== artwork) image.src = artwork;
+  else if (!artwork) image.removeAttribute("src");
+  art.querySelector("span").hidden = Boolean(artwork);
+  if (track.coverArtPageUrl && /^https:\/\/music\.apple\.com\//i.test(track.coverArtPageUrl)) {
+    source.href = track.coverArtPageUrl;
+    source.hidden = false;
+    source.textContent = "Artwork from Apple Music";
+  } else {
+    source.removeAttribute("href");
+    source.hidden = true;
+  }
+  statusElement.textContent = status;
+}
+
+async function lookupTrackArtwork(track) {
+  if (!track?.title?.trim() || !track.artist?.trim() || /^unknown artist$/i.test(track.artist.trim())) return;
+  const lookupKey = `${normalizeArtworkText(track.title)}|${normalizeArtworkText(track.artist)}`;
+  if (track.coverArtLookupKey === lookupKey && ["found", "not-found", "loading"].includes(track.coverArtLookupStatus)) return;
+  const requestId = ++artworkLookupRequest;
+  const lookupIsCurrent = () => requestId === artworkLookupRequest
+    && track.id === currentTrackId
+    && tracks.find(item => item.id === track.id) === track
+    && `${normalizeArtworkText(track.title)}|${normalizeArtworkText(track.artist)}` === lookupKey;
+  track.coverArtLookupStatus = "loading";
+  track.coverArtLookupError = "";
+  updateLyricsArtwork(track, "Searching for matching cover artwork…");
+  const query = new URLSearchParams({ term: `${track.artist} ${track.title}`, entity: "song", limit: "10" });
+  try {
+    const response = await fetch(`https://itunes.apple.com/search?${query}`, { headers: { Accept: "application/json" } });
+    if (!response.ok) throw new Error(`Artwork search returned HTTP ${response.status}.`);
+    const payload = await response.json();
+    const match = selectArtworkResult(payload.results || [], track);
+    if (!lookupIsCurrent()) return;
+    track.coverArtLookupKey = lookupKey;
+    if (!match?.artworkUrl100) {
+      track.coverArtLookupStatus = "not-found";
+      await persistTrack(track);
+      if (!lookupIsCurrent()) return;
+      updateLyricsArtwork(track, "No matching cover artwork was found.");
+      return;
+    }
+    const sourceArtwork = safeArtworkUrl(match.artworkUrl100);
+    if (!sourceArtwork) throw new Error("The artwork provider returned an unsupported image URL.");
+    track.coverArtUrl = artworkPaletteUrl(sourceArtwork);
+    track.coverArtPageUrl = /^https:\/\/music\.apple\.com\//i.test(match.trackViewUrl || "") ? match.trackViewUrl : "";
+    try {
+      track.coverPalette = await extractArtworkPalette(track.coverArtUrl);
+    } catch (error) {
+      track.coverPalette = paletteFor(track);
+      console.warn("Could not sample album artwork colors; using the existing cover palette.", error);
+    }
+    if (!lookupIsCurrent()) return;
+    track.coverArtLookupStatus = "found";
+    await persistTrack(track);
+    if (!lookupIsCurrent()) return;
+    updateLyricsArtwork(track);
+    syncNowPlaying();
+    if (lyricsView.classList.contains("open")) updateLyricsDisplay();
+    if (currentView !== "search" || searchSource === "local") renderContent();
+  } catch (error) {
+    if (!lookupIsCurrent()) return;
+    track.coverArtLookupStatus = "error";
+    track.coverArtLookupError = error.message;
+    updateLyricsArtwork(track, `Artwork search failed: ${error.message}`);
+    console.error(`Could not look up artwork for "${track.title}" by "${track.artist}".`, error);
+  }
+}
+
+function openTrackEditor(id) {
+  const track = tracks.find(item => item.id === id);
+  if (!track) return;
+  editingTrackId = id;
+  document.querySelector("#track-edit-title").value = track.title || "";
+  document.querySelector("#track-edit-artist").value = track.artist || "";
+  document.querySelector("#track-edit-feedback").textContent = "";
+  document.querySelector("#track-edit-dialog").showModal();
+  document.querySelector("#track-edit-title").focus();
 }
 
 function openDatabase() {
@@ -915,7 +1080,7 @@ function trackTable(items, removable = false) {
       <td><div class="track-title">${coverMarkup(track)}<span class="track-title-copy"><strong>${escapeHTML(track.title)}</strong></span></div></td>
       <td class="track-artist">${escapeHTML(track.artist || "Unknown artist")}</td>
       <td class="track-album">${escapeHTML(track.album || "—")}</td><td class="track-date">${track.addedAt ? new Date(track.addedAt).toLocaleDateString() : "—"}</td><td class="track-duration">${formatTime(track.duration)}</td>
-      <td><div class="track-actions"><button class="favorite ${track.favorite ? "active" : ""}" data-action="favorite" data-id="${escapeHTML(track.id)}" aria-label="${track.favorite ? "Remove from" : "Add to"} favorites">${track.favorite ? "♥" : "♡"}</button>${removable ? `<button data-action="remove-from-playlist" data-id="${escapeHTML(track.id)}" aria-label="Remove from playlist" title="Remove from playlist">−</button>` : `<button data-action="track-menu" data-id="${escapeHTML(track.id)}" aria-label="Track options" title="Add to playlist">···</button>`}</div></td>
+      <td><div class="track-actions"><button data-action="edit-track" data-id="${escapeHTML(track.id)}" aria-label="Edit track name and artist" title="Edit track details">✎</button><button class="favorite ${track.favorite ? "active" : ""}" data-action="favorite" data-id="${escapeHTML(track.id)}" aria-label="${track.favorite ? "Remove from" : "Add to"} favorites">${track.favorite ? "♥" : "♡"}</button>${removable ? `<button data-action="remove-from-playlist" data-id="${escapeHTML(track.id)}" aria-label="Remove from playlist" title="Remove from playlist">−</button>` : `<button data-action="track-menu" data-id="${escapeHTML(track.id)}" aria-label="Track options" title="Add to playlist">···</button>`}</div></td>
     </tr>`).join("")}
   </tbody></table></div>`;
 }
@@ -983,6 +1148,7 @@ function syncNowPlaying() {
     document.querySelector("#lyrics-track-heading").textContent = "Nothing playing";
     document.querySelector("#lyrics-song-title").textContent = "Your music, your words.";
     document.querySelector("#lyrics-artist").textContent = "";
+    updateLyricsArtwork({ id: "", title: "", coverPalette: ["#885cab", "#362648"] });
     updateLyricsDisplay();
     return;
   }
@@ -994,7 +1160,10 @@ function syncNowPlaying() {
   document.querySelector("#lyrics-track-heading").textContent = `${track.title} · ${track.artist}`;
   document.querySelector("#lyrics-song-title").textContent = track.title;
   document.querySelector("#lyrics-artist").textContent = track.artist;
-  document.querySelector("#lyrics-art").style.background = `linear-gradient(145deg,${paletteFor(track).join(",")})`;
+  const artworkStatus = track.coverArtLookupStatus === "loading" ? "Searching for matching cover artwork…"
+    : track.coverArtLookupStatus === "not-found" ? "No matching cover artwork was found."
+      : track.coverArtLookupStatus === "error" ? `Artwork search failed: ${track.coverArtLookupError}` : "";
+  updateLyricsArtwork(track, artworkStatus);
   document.querySelector("#duration-time").textContent = formatTime(audio.duration || track.duration);
   document.querySelector("#lyrics-duration-time").textContent = formatTime(audio.duration || track.duration);
   updateLyricsDisplay();
@@ -1119,6 +1288,7 @@ async function playTrack(id, collection = tracks) {
     return;
   }
   if (currentTrackId === id && audio.src) {
+    void lookupTrackArtwork(track);
     const graphReady = ensureAudioGraph();
     const playRequest = audio.play();
     try {
@@ -1150,6 +1320,7 @@ async function playTrack(id, collection = tracks) {
     nextUrl = URL.createObjectURL(playbackBlobForTrack(track));
     audio.src = nextUrl;
     currentTrackId = id;
+    void lookupTrackArtwork(track);
     const playRequest = audio.play();
     currentObjectUrl = nextUrl;
     if (oldUrl && oldUrl !== nextUrl) URL.revokeObjectURL(oldUrl);
@@ -1451,6 +1622,8 @@ async function handleAction(button) {
     const track = tracks.find(item => item.id === id);
     if (track) addToPlaylist(track);
   }
+  else if (action === "edit-track") openTrackEditor(id);
+  else if (action === "close-track-edit") document.querySelector("#track-edit-dialog").close();
   else if (action === "remove-from-playlist") {
     const playlist = playlists.find(item => item.id === activePlaylistId);
     if (!playlist) return;
@@ -1610,6 +1783,64 @@ document.addEventListener("click", event => {
     return;
   }
   handleAction(button);
+});
+
+document.querySelector("#track-edit-form").addEventListener("submit", async event => {
+  event.preventDefault();
+  const track = tracks.find(item => item.id === editingTrackId);
+  if (!track) {
+    document.querySelector("#track-edit-feedback").textContent = "This track is no longer in your library.";
+    return;
+  }
+  const form = event.currentTarget;
+  const formData = new FormData(form);
+  const title = String(formData.get("title") || "").trim();
+  const artist = String(formData.get("artist") || "").trim();
+  const feedback = document.querySelector("#track-edit-feedback");
+  if (!title || !artist) {
+    feedback.textContent = "Track name and artist are required.";
+    return;
+  }
+  const updated = { ...track, title, artist };
+  if (title !== track.title || artist !== track.artist) {
+    delete updated.coverArtUrl;
+    delete updated.coverArtPageUrl;
+    delete updated.coverPalette;
+    delete updated.coverArtLookupKey;
+    delete updated.coverArtLookupStatus;
+    delete updated.coverArtLookupError;
+  }
+  const submitButton = form.querySelector('[type="submit"]');
+  submitButton.disabled = true;
+  feedback.textContent = "";
+  try {
+    await persistTrack(updated);
+    if (authSession) queueCloudSync();
+    document.querySelector("#track-edit-dialog").close();
+    editingTrackId = null;
+    if (currentTrackId === updated.id) {
+      syncNowPlaying();
+      if (audio.src) void lookupTrackArtwork(updated);
+    }
+    renderContent();
+    showToast("Track details updated.");
+  } catch (error) {
+    feedback.textContent = `Could not save track details: ${error.message}`;
+    console.error("Could not save edited track details.", error);
+  } finally {
+    submitButton.disabled = false;
+  }
+});
+
+document.querySelector("#lyrics-art-image").addEventListener("error", () => {
+  const image = document.querySelector("#lyrics-art-image");
+  const track = tracks.find(item => item.id === currentTrackId);
+  if (!track || image.hidden) return;
+  image.hidden = true;
+  image.removeAttribute("src");
+  document.querySelector("#lyrics-art").querySelector("span").hidden = false;
+  document.querySelector("#lyrics-artwork-status").textContent = "The cover image could not be loaded; using its colors instead.";
+  console.error(`Could not load cover artwork for "${track.title}" by "${track.artist}".`);
 });
 
 content.addEventListener("submit", async event => {
