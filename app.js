@@ -28,6 +28,7 @@ let shuffleEnabled = false;
 let repeatEnabled = false;
 let searchQuery = "";
 let searchSource = "local";
+let playbackRequest = 0;
 let youtubeConfig = { apiKey: "" };
 let youtubeConfigLoaded = false;
 let youtubeConfigError = "";
@@ -47,6 +48,7 @@ let audioContext;
 let mediaSource;
 let gainNode;
 let filters = [];
+let audioGraphWarningShown = false;
 let lyricsEntries = [];
 let historyStack = [{ view: "home", playlistId: null }];
 let historyIndex = 0;
@@ -963,28 +965,71 @@ function syncNowPlaying() {
 }
 
 function ensureAudioGraph() {
-  if (audioContext) return audioContext.resume();
+  if (audioContext) {
+    if (audioContext.state === "running") return Promise.resolve(true);
+    return resumeAudioGraph(audioContext);
+  }
   const AudioContextClass = window.AudioContext || window.webkitAudioContext;
   if (!AudioContextClass) {
-    showToast("Your browser does not support audio equalization.");
-    return Promise.resolve();
+    warnAudioGraphUnavailable(new Error("This browser does not support Web Audio."));
+    return Promise.resolve(false);
   }
-  audioContext = new AudioContextClass();
-  mediaSource = audioContext.createMediaElementSource(audio);
-  gainNode = audioContext.createGain();
-  filters = EQ_FREQUENCIES.map((frequency, index) => {
-    const filter = audioContext.createBiquadFilter();
-    filter.type = index === 0 ? "lowshelf" : index === EQ_FREQUENCIES.length - 1 ? "highshelf" : "peaking";
-    filter.frequency.value = frequency;
-    filter.Q.value = 1;
-    return filter;
-  });
-  mediaSource.connect(filters[0]);
-  for (let index = 0; index < filters.length - 1; index++) filters[index].connect(filters[index + 1]);
-  filters[filters.length - 1].connect(gainNode);
-  gainNode.connect(audioContext.destination);
-  applyEqualizerFromControls();
-  return audioContext.resume();
+  let context;
+  let source;
+  try {
+    context = new AudioContextClass();
+    source = context.createMediaElementSource(audio);
+    const output = context.createGain();
+    const equalizerFilters = EQ_FREQUENCIES.map((frequency, index) => {
+      const filter = context.createBiquadFilter();
+      filter.type = index === 0 ? "lowshelf" : index === EQ_FREQUENCIES.length - 1 ? "highshelf" : "peaking";
+      filter.frequency.value = frequency;
+      filter.Q.value = 1;
+      filter.gain.value = Number(document.querySelector(`[data-band="${index}"]`).value);
+      return filter;
+    });
+    source.connect(equalizerFilters[0]);
+    for (let index = 0; index < equalizerFilters.length - 1; index++) equalizerFilters[index].connect(equalizerFilters[index + 1]);
+    equalizerFilters[equalizerFilters.length - 1].connect(output);
+    output.connect(context.destination);
+    audioContext = context;
+    mediaSource = source;
+    gainNode = output;
+    filters = equalizerFilters;
+    return resumeAudioGraph(context);
+  } catch (error) {
+    if (source && context) {
+      try {
+        source.disconnect();
+        source.connect(context.destination);
+        audioContext = context;
+        mediaSource = source;
+      } catch (fallbackError) {
+        console.error("Could not connect audio through the equalizer or the direct Web Audio output.", fallbackError);
+      }
+    }
+    warnAudioGraphUnavailable(error);
+    return context ? resumeAudioGraph(context).then(() => false) : Promise.resolve(false);
+  }
+}
+
+function resumeAudioGraph(context) {
+  try {
+    return context.resume().then(() => true).catch(error => {
+      warnAudioGraphUnavailable(error);
+      return false;
+    });
+  } catch (error) {
+    warnAudioGraphUnavailable(error);
+    return Promise.resolve(false);
+  }
+}
+
+function warnAudioGraphUnavailable(error) {
+  console.warn("Equalizer unavailable; local track playback will continue without equalization.", error);
+  if (audioGraphWarningShown) return;
+  audioGraphWarningShown = true;
+  showToast("Equalizer unavailable. Local playback will continue without equalization.");
 }
 
 function applyEqualizerFromControls() {
@@ -1018,6 +1063,7 @@ function saveEqualizer() {
 }
 
 async function playTrack(id, collection = tracks) {
+  const requestId = ++playbackRequest;
   const track = tracks.find(item => item.id === id);
   if (!track) return;
   if (onlineSearch.selectedVideoId) {
@@ -1030,29 +1076,77 @@ async function playTrack(id, collection = tracks) {
     return;
   }
   if (currentTrackId === id && audio.src) {
-    try { await ensureAudioGraph(); await audio.play(); }
-    catch (error) { showToast(`Playback failed: ${error.message}`); }
+    const graphReady = ensureAudioGraph();
+    const playRequest = audio.play();
+    try {
+      await playRequest;
+      if (requestId !== playbackRequest) return;
+      await graphReady;
+    } catch (error) {
+      if (requestId !== playbackRequest) return;
+      showToast(playbackErrorMessage(error));
+      console.error("Track playback failed.", error);
+      if (error.name === "NotSupportedError" || audio.error?.code === 4) {
+        clearFailedTrackPlayback();
+      }
+    }
     syncNowPlaying();
     return;
   }
+  const oldUrl = currentObjectUrl;
+  let nextUrl;
   try {
-    await ensureAudioGraph();
-    const oldUrl = currentObjectUrl;
-    currentObjectUrl = URL.createObjectURL(track.blob);
-    audio.src = currentObjectUrl;
+    ensureAudioGraph();
+    nextUrl = URL.createObjectURL(track.blob);
+    audio.src = nextUrl;
     currentTrackId = id;
-    await audio.play();
-    if (oldUrl) URL.revokeObjectURL(oldUrl);
+    const playRequest = audio.play();
+    currentObjectUrl = nextUrl;
+    if (oldUrl && oldUrl !== nextUrl) URL.revokeObjectURL(oldUrl);
+    await playRequest;
+    if (requestId !== playbackRequest) return;
     track.playCount = (track.playCount || 0) + 1;
     track.lastPlayed = Date.now();
-    await persistTrack(track);
     syncNowPlaying();
     renderContent();
     if (lyricsView.classList.contains("open")) updateLyricsDisplay();
+    try {
+      await persistTrack(track);
+    } catch (error) {
+      showToast(`Playback started, but listening history could not be saved: ${error.message}`);
+      console.error("Could not persist playback history.", error);
+    }
   } catch (error) {
-    showToast(`Could not play this track: ${error.message}`);
+    if (requestId !== playbackRequest) return;
+    showToast(playbackErrorMessage(error));
     console.error("Track playback failed.", error);
+    if (currentTrackId === id) {
+      clearFailedTrackPlayback();
+    } else if (nextUrl && nextUrl !== oldUrl) {
+      URL.revokeObjectURL(nextUrl);
+    }
   }
+}
+
+function clearFailedTrackPlayback() {
+  const failedUrl = currentObjectUrl;
+  currentTrackId = null;
+  currentObjectUrl = null;
+  audio.pause();
+  audio.removeAttribute("src");
+  audio.load();
+  if (failedUrl) URL.revokeObjectURL(failedUrl);
+  syncNowPlaying();
+}
+
+function playbackErrorMessage(error) {
+  if (error.name === "NotSupportedError" || audio.error?.code === 4) {
+    return "This browser cannot play this audio format. Try a browser-supported MP3, WAV, AAC, or Ogg file.";
+  }
+  if (error.name === "NotAllowedError") {
+    return "The browser blocked playback. Press Play again to allow audio.";
+  }
+  return `Could not play this track: ${error.message}`;
 }
 
 function getQueue() {

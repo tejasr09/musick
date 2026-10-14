@@ -22,7 +22,7 @@ Opening `index.html` directly may also work, but a local web server is recommend
 - Display synchronized lyrics from a user-supplied `.lrc` file and use the lyrics view as a full-screen player.
 - Use keyboard `/` to focus search.
 
-Playback uses the original local audio file without uploading or transcoding it; available formats and quality depend on browser codec and device support. Browser audio processing and the equalizer do not promise bit-perfect output.
+Playback uses the original local audio file without uploading or transcoding it; available formats and quality depend on browser codec and device support. Musick reports unsupported formats rather than silently treating them as playable. If Web Audio/equalizer setup is unavailable, local playback falls back to the browser's direct audio path. Browser audio processing and the equalizer do not promise bit-perfect output.
 
 ## Third-party music services
 
