@@ -1664,7 +1664,7 @@ function estimateWordTimings() {
   const track = getLyricsEditorTrack();
   const duration = Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : Number(track.duration);
   if (!Number.isFinite(duration) || duration <= 0) {
-    throw new Error("Track duration is unavailable. Play or load this local track, then try again.");
+    throw new Error("Word timing is unavailable because this track's duration could not be read. Its format may not be supported by the browser; play it again or use line-timed .lrc lyrics.");
   }
   const sourceLines = document.querySelector("#lyrics-editor-text").value.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
   if (!sourceLines.length) throw new Error("Add lyrics before estimating word timings.");
