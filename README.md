@@ -18,7 +18,7 @@ Docker support is optional; the existing Node/static-server workflow above is un
 
 ```powershell
 docker build -t musick:local .
-docker run --detach --name musick-local --publish 8080:80 musick:local
+docker run --detach --name musick-local --publish 127.0.0.1:8080:80 musick:local
 ```
 
 Open <http://localhost:8080> in your browser. Stop and remove the container when finished:
@@ -31,12 +31,12 @@ docker rm musick-local
 To enable optional YouTube keyword search, create the ignored `youtube-config.local.json` as described below, then run the container with this read-only bind mount:
 
 ```powershell
-docker run --detach --name musick-local --publish 8080:80 `
+docker run --detach --name musick-local --publish 127.0.0.1:8080:80 `
   --mount "type=bind,source=$((Resolve-Path .\youtube-config.local.json).Path),target=/usr/share/nginx/html/youtube-config.local.json,readonly" `
   musick:local
 ```
 
-The image builds and runs without this file. Do not add it to the image or commit it. The existing Supabase browser configuration and public publishable key are unchanged; Supabase remains hosted by Supabase, and no server-side Supabase key is included. For Google Cloud's website-referrer restriction, allow `http://localhost:8080/*` when using YouTube search in this container; the browser-visible API key still needs the existing API restriction to YouTube Data API v3.
+The image contains an empty YouTube config by default, so it builds and runs without the local file or an API key. A read-only bind mount overrides that empty default when configured. Do not add your local config to the image or commit it. The existing Supabase browser configuration and public publishable key are unchanged; Supabase remains hosted by Supabase, and no server-side Supabase key is included. For Google Cloud's website-referrer restriction, allow `http://localhost:8080/*` when using YouTube search in this container; the browser-visible API key still needs the existing API restriction to YouTube Data API v3.
 
 This container is only available while Docker is running on your computer; it does not publish Musick to the internet or keep it online when your computer or container is stopped. A public HTTPS deployment needs a separate hosting provider and domain, and its HTTPS site URL and callback/redirect URL must be configured in Supabase Auth's URL configuration and redirect allow list.
 
