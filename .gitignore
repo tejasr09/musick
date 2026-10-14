@@ -4,6 +4,7 @@
 supabase/.env
 supabase/.temp/
 supabase/.branches/
+youtube-config.local.json
 node_modules/
 dist/
 coverage/

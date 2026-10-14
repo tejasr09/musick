@@ -27,6 +27,15 @@ let activePlaylistId = null;
 let shuffleEnabled = false;
 let repeatEnabled = false;
 let searchQuery = "";
+let searchSource = "local";
+let youtubeConfig = { apiKey: "" };
+let youtubeConfigLoaded = false;
+let youtubeConfigError = "";
+let onlineSearch = { status: "idle", results: [], error: "", query: "", selectedVideoId: "", playerError: "" };
+let onlineSearchController;
+let onlineSearchRequest = 0;
+let youtubePlayer;
+let youtubePlayerApiPromise;
 let toastTimer;
 let currentObjectUrl = null;
 let audioContext;
@@ -92,7 +101,9 @@ async function supabaseFetch(path, options = {}, requireSession = true) {
     const detail = await response.json().catch(() => ({}));
     throw new Error(detail.msg || detail.message || detail.error_description || detail.error || `Supabase returned HTTP ${response.status}.`);
   }
-  return response.status === 204 ? null : response.json();
+  if (response.status === 204) return null;
+  const responseBody = await response.text();
+  return responseBody ? JSON.parse(responseBody) : null;
 }
 
 async function refreshAuthSession() {
@@ -400,6 +411,16 @@ function renderSidebar() {
 }
 
 function changeView(view, playlistId = null, addHistory = true) {
+  if (currentView === "search" && view !== "search") {
+    onlineSearchController?.abort();
+    onlineSearchRequest++;
+    if (onlineSearch.status === "loading") {
+      onlineSearch = { status: "idle", results: [], error: "", query: "", selectedVideoId: "", playerError: "" };
+    }
+    onlineSearch.selectedVideoId = "";
+    onlineSearch.playerError = "";
+    destroyYouTubePlayer();
+  }
   currentView = view;
   activePlaylistId = playlistId;
   if (addHistory) {
@@ -414,6 +435,7 @@ function changeView(view, playlistId = null, addHistory = true) {
 }
 
 function renderContent() {
+  if (currentView !== "search") destroyYouTubePlayer();
   if (currentView === "home") renderHome();
   else if (currentView === "library") renderLibrary();
   else if (currentView === "search") renderSearch();
@@ -476,9 +498,210 @@ function playlistCard(playlist) {
 
 function renderSearch() {
   const results = searchQuery.trim() ? tracks.filter(track => track.blob && trackMatches(track, searchQuery.trim())) : [];
+  const headerSearch = document.querySelector("#search-input");
+  const onlineConfigured = Boolean(youtubeConfig.apiKey);
+  const localResults = `<section><div class="section-heading"><h2>Your library <span class="track-count">${results.length}</span></h2></div>${searchQuery.trim() ? results.length ? trackTable(results) : emptyState("No local matches", "Try another title or artist, or search public YouTube videos.") : emptyState("Search your collection", "Find a song, artist, album, or tag in the music you have added.")}</section>`;
+  const onlineResults = renderOnlineSearchResults();
+  headerSearch.placeholder = searchSource === "youtube" ? "Search YouTube videos…" : "What do you want to play?";
+  headerSearch.setAttribute("aria-label", searchSource === "youtube" ? "Search YouTube videos" : "Search your local music");
   content.innerHTML = `
     <div class="page-heading"><div><span class="eyebrow">FIND A FAVORITE</span><h1>Search</h1></div></div>
-    ${searchQuery.trim() ? `<div class="section-heading"><h2>Results <span class="track-count">${results.length}</span></h2></div>${results.length ? trackTable(results) : emptyState("No matches yet", "Try another title, artist, album, or tag.")}` : emptyState("Search your collection", "Find a song, artist, album, or tag in the music you have added.")}`;
+    <div class="search-source-tabs" role="tablist" aria-label="Search source">
+      <button class="search-source-tab ${searchSource === "local" ? "active" : ""}" role="tab" aria-selected="${searchSource === "local"}" data-action="search-source" data-source="local">Your library</button>
+      <button class="search-source-tab ${searchSource === "youtube" ? "active" : ""}" role="tab" aria-selected="${searchSource === "youtube"}" data-action="search-source" data-source="youtube">YouTube <span class="youtube-label">VIDEOS</span></button>
+    </div>
+    ${searchSource === "local" ? localResults : `<form id="online-search-form" class="online-search-form">
+      <span class="youtube-source-mark" aria-hidden="true">▶</span><span>Search public <strong>YouTube videos</strong>. Playback stays in YouTube's embedded player.</span>
+      <button class="primary-button" type="submit" ${!youtubeConfigLoaded || !onlineConfigured ? "disabled" : ""}>Search YouTube</button>
+    </form>${onlineResults}
+    ${onlineConfigured ? "" : `<p class="online-setup-hint">Online search is off until you add a restricted YouTube Data API key to <code>youtube-config.local.json</code>.</p>`}
+    <p class="recommendation-note">This searches YouTube videos, not YouTube Music catalogs, accounts, or subscriptions. Results are not added to your local music library or playlists.</p>`}`;
+}
+
+function renderOnlineSearchResults() {
+  if (youtubeConfigError) return onlineSearchState("error", "YouTube settings could not be loaded.", youtubeConfigError);
+  if (!youtubeConfigLoaded) return onlineSearchState("loading", "Checking online search configuration…");
+  if (!youtubeConfig.apiKey) return onlineSearchState("empty", "Online search is turned off.", "Add your restricted YouTube Data API key to youtube-config.local.json to enable it.");
+  if (!searchQuery.trim()) return onlineSearchState("empty", "Search YouTube for a video.", "Type a song, artist, or video in the search box above, then choose Search YouTube. Results play only in YouTube's embedded player.");
+
+  const player = onlineSearch.selectedVideoId ? `
+    <section class="youtube-player-card">
+      <div class="youtube-player-heading"><div><span class="youtube-label">YOUTUBE VIDEO</span><h2>${escapeHTML(onlineSearch.results.find(item => item.id.videoId === onlineSearch.selectedVideoId)?.snippet.title || "YouTube video")}</h2></div><button class="secondary-button" data-action="close-youtube-player">Close player</button></div>
+      <div class="youtube-player-frame"><div id="youtube-player"></div></div>
+      <p id="youtube-player-error" class="youtube-player-error" role="status">${escapeHTML(onlineSearch.playerError || (youtubePlayer ? "" : "Loading YouTube's embedded player…"))}</p>
+      <p class="recommendation-note">Playing via YouTube's official embedded player. Musick does not extract or handle YouTube audio.</p>
+    </section>` : "";
+
+  if (onlineSearch.status === "loading") return `${player}${onlineSearchState("loading", "Searching YouTube…")}`;
+  if (onlineSearch.status === "error") return `${player}${onlineSearchState("error", "YouTube search failed.", onlineSearch.error)}`;
+  if (onlineSearch.status === "no-results") return `${player}${onlineSearchState("empty", "No YouTube videos found.", `No results for “${searchQuery.trim()}”. Try another search.`)}`;
+  if (!onlineSearch.results.length) return `${player}${onlineSearchState("empty", "Ready to search YouTube.", "Search only runs when you press the button. It does not run on every keystroke.")}`;
+
+  return `${player}<section><div class="section-heading"><h2>YouTube results <span class="track-count">${onlineSearch.results.length}</span></h2></div><div class="youtube-results-grid">${onlineSearch.results.map(youtubeResultCard).join("")}</div></section>`;
+}
+
+function onlineSearchState(kind, title, message = "") {
+  const icon = kind === "loading" ? `<span class="online-spinner" aria-hidden="true"></span>` : `<span class="empty-icon">${kind === "error" ? "!" : "▶"}</span>`;
+  return `<div class="empty-state online-search-state ${kind}" role="${kind === "error" ? "alert" : "status"}"><div>${icon}<h3>${escapeHTML(title)}</h3>${message ? `<p>${escapeHTML(message)}</p>` : ""}</div></div>`;
+}
+
+function youtubeResultCard(video) {
+  const id = video.id.videoId;
+  const snippet = video.snippet;
+  const thumbnail = snippet.thumbnails?.medium?.url || snippet.thumbnails?.default?.url || "";
+  const published = snippet.publishedAt ? new Date(snippet.publishedAt).toLocaleDateString() : "";
+  return `<article class="youtube-result">
+    <button class="youtube-result-play" data-action="play-youtube" data-id="${escapeHTML(id)}" aria-label="Play ${escapeHTML(snippet.title)} in the YouTube player">
+      <img src="${escapeHTML(thumbnail)}" alt="" loading="lazy" referrerpolicy="no-referrer">
+      <span class="youtube-play-overlay" aria-hidden="true">▶</span>
+    </button>
+    <div class="youtube-result-copy"><div class="youtube-result-label"><span class="youtube-label">YOUTUBE</span>${published ? `<span>${escapeHTML(published)}</span>` : ""}</div>
+      <h3>${escapeHTML(snippet.title)}</h3><p>${escapeHTML(snippet.channelTitle)}</p>
+      <button class="secondary-button" data-action="play-youtube" data-id="${escapeHTML(id)}">Play in YouTube</button>
+    </div>
+  </article>`;
+}
+
+function searchSourceChanged(source) {
+  if (!["local", "youtube"].includes(source) || source === searchSource) return;
+  searchSource = source;
+  if (source === "youtube") onlineSearch = { status: "idle", results: [], error: "", query: "", selectedVideoId: "", playerError: "" };
+  destroyYouTubePlayer();
+  renderSearch();
+}
+
+async function loadYouTubeConfig() {
+  try {
+    const response = await fetch("./youtube-config.local.json", { cache: "no-store" });
+    if (!response.ok && response.status !== 404) throw new Error(`Local YouTube settings returned HTTP ${response.status}.`);
+    if (response.ok) {
+      const config = await response.json();
+      if (typeof config.apiKey !== "string") throw new Error("youtube-config.local.json must define an apiKey string.");
+      youtubeConfig = { apiKey: config.apiKey.trim() };
+    }
+  } catch (error) {
+    youtubeConfigError = error.message;
+    console.error("Could not load local YouTube search settings.", error);
+  } finally {
+    youtubeConfigLoaded = true;
+    if (currentView === "search" && searchSource === "youtube") renderSearch();
+  }
+}
+
+async function searchYouTubeVideos() {
+  const query = searchQuery.trim();
+  if (!query) {
+    onlineSearch = { status: "empty", results: [], error: "", query: "", selectedVideoId: "", playerError: "" };
+    renderSearch();
+    return;
+  }
+  if (!youtubeConfigLoaded || !youtubeConfig.apiKey) {
+    onlineSearch = { status: "error", results: [], error: youtubeConfigError || "Configure a restricted YouTube Data API key to enable online search.", query, selectedVideoId: "", playerError: "" };
+    renderSearch();
+    return;
+  }
+  if (!["https:", "http:"].includes(location.protocol)) {
+    onlineSearch = { status: "error", results: [], error: "Online search requires a local or hosted HTTP server. Open Musick at a localhost or HTTPS address instead of file://.", query, selectedVideoId: "", playerError: "" };
+    renderSearch();
+    return;
+  }
+
+  onlineSearchController?.abort();
+  onlineSearchController = new AbortController();
+  const requestId = ++onlineSearchRequest;
+  onlineSearch = { status: "loading", results: [], error: "", query, selectedVideoId: "", playerError: "" };
+  destroyYouTubePlayer();
+  renderSearch();
+  try {
+    const parameters = new URLSearchParams({
+      part: "snippet", type: "video", videoEmbeddable: "true", safeSearch: "moderate",
+      maxResults: "12", q: query, fields: "items(id/videoId,snippet/title,snippet/channelTitle,snippet/publishedAt,snippet/thumbnails/default/url,snippet/thumbnails/medium/url)",
+      key: youtubeConfig.apiKey
+    });
+    const response = await fetch(`https://www.googleapis.com/youtube/v3/search?${parameters}`, { signal: onlineSearchController.signal });
+    const body = await response.json();
+    if (!response.ok || body.error) {
+      const reason = body.error?.errors?.[0]?.reason;
+      const message = body.error?.message || `YouTube returned HTTP ${response.status}.`;
+      throw new Error(reason ? `${message} (${reason})` : message);
+    }
+    if (requestId !== onlineSearchRequest) return;
+    const results = Array.isArray(body.items) ? body.items.filter(item => item?.id?.videoId && item?.snippet?.title) : [];
+    onlineSearch = { status: results.length ? "results" : "no-results", results, error: "", query, selectedVideoId: "", playerError: "" };
+    renderSearch();
+  } catch (error) {
+    if (error.name === "AbortError" || requestId !== onlineSearchRequest) return;
+    onlineSearch = { status: "error", results: [], error: error.message, query, selectedVideoId: "", playerError: "" };
+    renderSearch();
+  }
+}
+
+function loadYouTubeIframeApi() {
+  if (window.YT?.Player) return Promise.resolve(window.YT);
+  if (youtubePlayerApiPromise) return youtubePlayerApiPromise;
+  youtubePlayerApiPromise = new Promise((resolve, reject) => {
+    const previousCallback = window.onYouTubeIframeAPIReady;
+    window.onYouTubeIframeAPIReady = () => {
+      if (typeof previousCallback === "function") previousCallback();
+      resolve(window.YT);
+    };
+    const script = document.createElement("script");
+    script.src = "https://www.youtube.com/iframe_api";
+    script.async = true;
+    script.onerror = () => {
+      youtubePlayerApiPromise = null;
+      reject(new Error("YouTube's official embedded player API could not be loaded. Check your connection and content-security settings."));
+    };
+    document.head.append(script);
+  });
+  return youtubePlayerApiPromise;
+}
+
+async function playYouTubeVideo(videoId) {
+  const video = onlineSearch.results.find(item => item.id.videoId === videoId);
+  if (!video) return;
+  audio.pause();
+  onlineSearch.selectedVideoId = videoId;
+  onlineSearch.playerError = "";
+  destroyYouTubePlayer();
+  renderSearch();
+  try {
+    await loadYouTubeIframeApi();
+    if (onlineSearch.selectedVideoId !== videoId || !document.querySelector("#youtube-player")) return;
+    const origin = location.origin;
+    youtubePlayer = new window.YT.Player("youtube-player", {
+      host: "https://www.youtube-nocookie.com",
+      width: "100%",
+      height: "100%",
+      videoId,
+      playerVars: { autoplay: 1, controls: 1, playsinline: 1, rel: 0, origin },
+      events: {
+        onReady: event => event.target.playVideo(),
+        onError: event => {
+          const messages = {
+            2: "YouTube rejected this video's ID or player parameters.",
+            5: "This video could not play in YouTube's HTML5 embedded player.",
+            100: "This video is unavailable, private, or has been removed.",
+            101: "The video owner does not allow playback in embedded players.",
+            150: "The video owner does not allow playback in embedded players.",
+            153: "YouTube needs a valid HTTP referrer. Serve Musick from localhost or HTTPS."
+          };
+          onlineSearch.playerError = messages[event.data] || `YouTube's embedded player reported error ${event.data}.`;
+          const errorElement = document.querySelector("#youtube-player-error");
+          if (errorElement) errorElement.textContent = onlineSearch.playerError;
+        }
+      }
+    });
+  } catch (error) {
+    onlineSearch.playerError = error.message;
+    const errorElement = document.querySelector("#youtube-player-error");
+    if (errorElement) errorElement.textContent = error.message;
+  }
+}
+
+function destroyYouTubePlayer() {
+  if (youtubePlayer && typeof youtubePlayer.destroy === "function") youtubePlayer.destroy();
+  youtubePlayer = null;
 }
 
 function renderPlaylist() {
@@ -655,6 +878,11 @@ function saveEqualizer() {
 async function playTrack(id, collection = tracks) {
   const track = tracks.find(item => item.id === id);
   if (!track) return;
+  if (onlineSearch.selectedVideoId) {
+    onlineSearch.selectedVideoId = "";
+    onlineSearch.playerError = "";
+    destroyYouTubePlayer();
+  }
   if (!track.blob) {
     showToast("This playlist entry is synced, but its audio file is only available on another device.");
     return;
@@ -931,6 +1159,14 @@ function handleAction(button) {
   }
   else if (action === "import-playlist") document.querySelector("#playlist-file").click();
   else if (action === "connections") changeView("connections");
+  else if (action === "search-source") searchSourceChanged(button.dataset.source);
+  else if (action === "play-youtube") playYouTubeVideo(id);
+  else if (action === "close-youtube-player") {
+    onlineSearch.selectedVideoId = "";
+    onlineSearch.playerError = "";
+    destroyYouTubePlayer();
+    renderSearch();
+  }
   else if (action === "sign-out") signOut();
   else if (action === "toggle-auth-mode") {
     pendingAuthMode = pendingAuthMode === "signin" ? "signup" : "signin";
@@ -1008,6 +1244,11 @@ document.addEventListener("click", event => {
 });
 
 content.addEventListener("submit", async event => {
+  if (event.target.id === "online-search-form") {
+    event.preventDefault();
+    searchYouTubeVideos();
+    return;
+  }
   if (event.target.id !== "auth-form") return;
   event.preventDefault();
   const form = event.target;
@@ -1060,11 +1301,22 @@ document.querySelector("#lyrics-file").addEventListener("change", async event =>
 document.querySelector("#search-input").addEventListener("input", event => {
   searchQuery = event.target.value;
   if (currentView !== "search") changeView("search");
-  else renderContent();
+  else {
+    if (searchSource === "youtube") {
+      onlineSearchController?.abort();
+      onlineSearchRequest++;
+      onlineSearch = { status: "idle", results: [], error: "", query: "", selectedVideoId: "", playerError: "" };
+      destroyYouTubePlayer();
+    }
+    renderContent();
+  }
 });
 
 document.addEventListener("keydown", event => {
-  if (event.key === "/" && !["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement.tagName)) {
+  if (event.key === "Enter" && event.target.id === "search-input" && currentView === "search" && searchSource === "youtube") {
+    event.preventDefault();
+    searchYouTubeVideos();
+  } else if (event.key === "/" && !["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement.tagName)) {
     event.preventDefault();
     document.querySelector("#search-input").focus();
   } else if (event.key === "Escape" && lyricsView.classList.contains("open") && !document.fullscreenElement) {
@@ -1195,6 +1447,7 @@ document.addEventListener("fullscreenchange", () => {
 
 async function initialize() {
   audio.volume = 0.8;
+  loadYouTubeConfig();
   applySavedEqualizer();
   renderProfile();
   renderSidebar();

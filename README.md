@@ -17,6 +17,7 @@ Opening `index.html` directly may also work, but a local web server is recommend
 - Import and play audio files from your device. Audio blobs and track details stay in the browser's IndexedDB; no audio is uploaded.
 - Create, rename, recolor, reorder, export, and delete playlists. Import `.m3u`/`.m3u8` playlists that match files already in your local library.
 - Search your local tracks and get on-device recommendations based on your own favorites and listening history.
+- Optionally search public YouTube videos through the official YouTube Data API and play them only in YouTube's official embedded player. Online search is disabled by default until you provide a local API-key configuration.
 - Adjust volume, shuffle and repeat, seek through tracks, favorite songs, and use the five-band Web Audio equalizer, with presets.
 - Display synchronized lyrics from a user-supplied `.lrc` file and use the lyrics view as a full-screen player.
 - Use keyboard `/` to focus search.
@@ -29,10 +30,38 @@ Musick currently plays local files; it does **not** log in to or stream from Spo
 
 - **Spotify:** Its Web API can provide some account and playlist metadata to an authorized app. It does not grant an independent app unrestricted, lossless playback of subscription tracks or a general-purpose subscription verification endpoint.
 - **Apple Music:** MusicKit offers an official integration path, subject to Apple developer-token setup, user permission, regional availability, and MusicKit's playback and subscription rules.
-- **YouTube Music:** Google does not offer a general public YouTube Music API for third-party account access and music playback.
+- **YouTube Music:** Google does not offer a general public YouTube Music API for third-party account access and subscription playback. Optional online video search uses the separate YouTube Data API and YouTube's official embedded player. It does not access YouTube Music accounts or subscriptions, pass YouTube audio through Musick's audio player, or guarantee any particular audio quality.
 - **Musixmatch:** Lyrics lookup or verification must be implemented through an approved Musixmatch API agreement and credentials. Musick does not claim lyrics are verified; its lyrics feature plays user-provided `.lrc` files.
 
 The connection screen describes these dependencies. Do not ask users to enter their third-party passwords into Musick.
+
+## Optional online YouTube video search
+
+This optional search uses Google's official **YouTube Data API v3** to search public videos and YouTube's official [IFrame Player API](https://developers.google.com/youtube/iframe_api_reference) for playback. It is not YouTube Music search. Videos that cannot be embedded may fail to play; the player reports unavailable or embedding-disabled videos. The videos remain in YouTube's player and never enter Musick's audio element, local library, or playlists.
+
+To enable online search during local development:
+
+1. In [Google Cloud Console](https://console.cloud.google.com/), create or select a project and enable **YouTube Data API v3**.
+2. Under **APIs & Services → Credentials**, create an API key. Under **API restrictions**, restrict it to **YouTube Data API v3**. Under **Application restrictions**, choose **Websites** and allow only the exact referrers you use, such as `http://localhost:3000/*` and `http://127.0.0.1:3000/*`.
+3. From the project folder in PowerShell, copy the empty example to an ignored, local-only configuration file:
+
+   ```powershell
+   Copy-Item .\youtube-config.example.json .\youtube-config.local.json
+   ```
+
+   Edit `youtube-config.local.json` and set its `apiKey` value to your restricted key. This file is in `.gitignore`; do not force-add or commit it. The checked-in example remains empty. A website-restricted YouTube API key is visible to users of a browser app, so it is **not a secret**: the referrer and API restrictions are essential.
+
+4. Serve Musick over HTTP rather than opening `index.html` as a `file://` URL:
+
+   ```powershell
+   npx serve . -l 3000
+   ```
+
+   Open `http://localhost:3000`, go to **Search → YouTube**, enter a query in the top search box, and choose **Search YouTube**. Search is only sent when requested, not on every keystroke. Each search consumes YouTube Data API quota.
+
+For deployment, add only your intended production HTTPS referrer to the API key's website restrictions, such as `https://your-domain.example/*`. GitHub Pages also needs its actual hostname and project path allowed. Keep localhost entries only for development.
+
+This public-video search does **not** need OAuth or a redirect URI. If a future feature requires private, account-authorized YouTube data, configure OAuth consent and a separate **Web application OAuth client** in Google Cloud: add the deployed site origin (scheme and host) to **Authorized JavaScript origins**, and the exact callback URL to **Authorized redirect URIs**. A browser OAuth client ID is public; any OAuth client secret belongs only on a trusted server/Edge Function. Never put an OAuth client secret, Google service-account private key, Supabase service-role key, or other server credential in the browser or in GitHub.
 
 ## Supabase setup
 
