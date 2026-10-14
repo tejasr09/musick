@@ -172,7 +172,7 @@ button { cursor: pointer; }
 .track-table { width: 100%; border-collapse: collapse; }
 .track-table th { padding: 0 10px 12px; border-bottom: 1px solid var(--line); color: var(--subtle); font-size: 9px; font-weight: 600; letter-spacing: .8px; text-align: left; text-transform: uppercase; white-space: nowrap; }
 .track-table th:first-child { width: 43px; }
-.track-table th:last-child { width: 100px; text-align: right; }
+.track-table th:last-child { width: 136px; text-align: right; }
 .track-row { height: 63px; color: #c2c0c8; transition: background .16s; }
 .track-row:hover { background: rgba(255,255,255,.035); }
 .track-row.current { background: rgba(139,92,246,.075); color: #e4dcff; }
@@ -194,6 +194,7 @@ button { cursor: pointer; }
 .track-actions button { width: 27px; height: 27px; border: 0; border-radius: 5px; background: transparent; color: #bdb7c6; }
 .track-actions button:hover { background: rgba(255,255,255,.1); color: #fff; }
 .track-actions .favorite.active { color: #e7a1e6; }
+.track-actions .delete-track-button:hover { background: rgba(239,92,112,.13); color: #ff9aa7; }
 .playing-indicator { display: inline-flex; height: 15px; align-items: center; gap: 2px; }
 .playing-indicator i { width: 2px; height: 6px; border-radius: 2px; background: #a78bfa; animation: playing-bars .7s ease-in-out infinite alternate; }
 .playing-indicator i:nth-child(2) { height: 12px; animation-delay: .18s; }

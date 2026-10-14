@@ -327,6 +327,19 @@ function deleteCloudPlaylist(id) {
   });
 }
 
+function deleteCloudTrack(id) {
+  if (!authSession) return;
+  cloudSyncTask = cloudSyncTask.then(async () => {
+    if (!(await ensureAuthSession())) throw new Error("Could not refresh the Supabase session.");
+    const encodedId = encodeURIComponent(id);
+    await supabaseFetch(`/rest/v1/playlist_tracks?track_id=eq.${encodedId}`, { method: "DELETE" });
+    await supabaseFetch(`/rest/v1/tracks?id=eq.${encodedId}`, { method: "DELETE" });
+  }).catch(error => {
+    showToast(`Track removed locally, but cloud deletion failed: ${error.message}`);
+    console.error("Could not delete the cloud track metadata.", error);
+  });
+}
+
 function loadPlaylists() {
   try {
     const value = JSON.parse(localStorage.getItem(PLAYLISTS_KEY) || "[]");
@@ -1067,7 +1080,7 @@ function renderPlaylist() {
       <button class="secondary-button" data-action="rename-playlist" data-id="${escapeHTML(playlist.id)}">Rename</button>
       <button class="secondary-button" data-action="export-playlist" data-id="${escapeHTML(playlist.id)}">Export .m3u</button>
       <label class="visually-hidden" for="playlist-color">Playlist color</label><input id="playlist-color" type="color" value="${escapeHTML(playlist.color || "#a980ff")}" data-action="playlist-color" data-id="${escapeHTML(playlist.id)}" title="Customize playlist color">
-      <button class="icon-button small" data-action="delete-playlist" data-id="${escapeHTML(playlist.id)}" aria-label="Delete playlist" title="Delete playlist">⋯</button>
+      <button class="secondary-button delete-playlist-button" data-action="delete-playlist" data-id="${escapeHTML(playlist.id)}" aria-label="Delete playlist" title="Delete playlist">Delete playlist</button>
     </div>
     ${playlistTracks.length ? trackTable(playlistTracks, true) : emptyState("This playlist is yours to fill", "Add local music files to get your playlist started.", "＋ Add music")}`;
 }
@@ -1080,7 +1093,7 @@ function trackTable(items, removable = false) {
       <td><div class="track-title">${coverMarkup(track)}<span class="track-title-copy"><strong>${escapeHTML(track.title)}</strong></span></div></td>
       <td class="track-artist">${escapeHTML(track.artist || "Unknown artist")}</td>
       <td class="track-album">${escapeHTML(track.album || "—")}</td><td class="track-date">${track.addedAt ? new Date(track.addedAt).toLocaleDateString() : "—"}</td><td class="track-duration">${formatTime(track.duration)}</td>
-      <td><div class="track-actions"><button data-action="edit-track" data-id="${escapeHTML(track.id)}" aria-label="Edit track name and artist" title="Edit track details">✎</button><button class="favorite ${track.favorite ? "active" : ""}" data-action="favorite" data-id="${escapeHTML(track.id)}" aria-label="${track.favorite ? "Remove from" : "Add to"} favorites">${track.favorite ? "♥" : "♡"}</button>${removable ? `<button data-action="remove-from-playlist" data-id="${escapeHTML(track.id)}" aria-label="Remove from playlist" title="Remove from playlist">−</button>` : `<button data-action="track-menu" data-id="${escapeHTML(track.id)}" aria-label="Track options" title="Add to playlist">···</button>`}</div></td>
+      <td><div class="track-actions"><button data-action="edit-track" data-id="${escapeHTML(track.id)}" aria-label="Edit track name and artist" title="Edit track details">✎</button><button class="favorite ${track.favorite ? "active" : ""}" data-action="favorite" data-id="${escapeHTML(track.id)}" aria-label="${track.favorite ? "Remove from" : "Add to"} favorites">${track.favorite ? "♥" : "♡"}</button>${removable ? `<button data-action="remove-from-playlist" data-id="${escapeHTML(track.id)}" aria-label="Remove from playlist" title="Remove from playlist">−</button>` : `<button data-action="track-menu" data-id="${escapeHTML(track.id)}" aria-label="Add to playlist" title="Add to playlist">＋</button>`}<button class="delete-track-button" data-action="delete-track" data-id="${escapeHTML(track.id)}" aria-label="Remove song from library" title="Remove song from library">×</button></div></td>
     </tr>`).join("")}
   </tbody></table></div>`;
 }
@@ -1624,6 +1637,36 @@ async function handleAction(button) {
   }
   else if (action === "edit-track") openTrackEditor(id);
   else if (action === "close-track-edit") document.querySelector("#track-edit-dialog").close();
+  else if (action === "delete-track") {
+    const track = tracks.find(item => item.id === id);
+    if (!track || !window.confirm(`Remove "${track.title}" from your library and playlists on this device? The original audio file on your device will not be deleted.`)) return;
+    try {
+      await deleteStoredTrack(id);
+      tracks = tracks.filter(item => item.id !== id);
+      playlists.forEach(playlist => { playlist.trackIds = playlist.trackIds.filter(trackId => trackId !== id); });
+      savePlaylists();
+      if (authSession) {
+        queueCloudSync();
+        deleteCloudTrack(id);
+      }
+      if (currentTrackId === id) {
+        playbackRequest++;
+        artworkLookupRequest++;
+        lyricsEntries = [];
+        clearFailedTrackPlayback();
+      }
+      if (editingTrackId === id) {
+        document.querySelector("#track-edit-dialog").close();
+        editingTrackId = null;
+      }
+      renderSidebar();
+      renderContent();
+      showToast("Song removed from your library. The original audio file was not deleted.");
+    } catch (error) {
+      showToast(`Could not remove the song from your library: ${error.message}`);
+      console.error("Could not remove the local track.", error);
+    }
+  }
   else if (action === "remove-from-playlist") {
     const playlist = playlists.find(item => item.id === activePlaylistId);
     if (!playlist) return;
@@ -2068,7 +2111,8 @@ document.addEventListener("fullscreenchange", () => {
 });
 
 async function initialize() {
-  audio.volume = 0.8;
+  audio.volume = 0;
+  document.querySelector("#volume-control").value = "0";
   loadYouTubeConfig();
   applySavedEqualizer();
   renderProfile();

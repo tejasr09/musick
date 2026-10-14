@@ -43,6 +43,7 @@ This container is only available while Docker is running on your computer; it do
 ## What works
 
 - Import and play audio files from your device. Audio blobs and track details stay in the browser's IndexedDB; no audio is uploaded.
+- Remove a song from the local library and its playlists, or delete a playlist without deleting the original audio file. The player starts at zero volume on each launch; adjust it manually when ready to listen.
 - Edit a local track's title and artist. When a track is played, Musick can search Apple Music's public Search API for a matching cover; only the title and artist are sent for that lookup, and audio remains local. Matching artwork and its sampled colors are cached with the local track, and the lyrics view links to the Apple Music result.
 - Create, rename, recolor, reorder, export, and delete playlists. Import `.m3u`/`.m3u8` playlists that match files already in your local library.
 - Search your local tracks and get on-device recommendations based on your own favorites and listening history.
