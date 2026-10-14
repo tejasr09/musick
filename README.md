@@ -17,7 +17,7 @@ Opening `index.html` directly may also work, but a local web server is recommend
 - Import and play audio files from your device. Audio blobs and track details stay in the browser's IndexedDB; no audio is uploaded.
 - Create, rename, recolor, reorder, export, and delete playlists. Import `.m3u`/`.m3u8` playlists that match files already in your local library.
 - Search your local tracks and get on-device recommendations based on your own favorites and listening history.
-- Optionally search public YouTube videos through the official YouTube Data API and play them only in YouTube's official embedded player. Online search is disabled by default until you provide a local API-key configuration.
+- Search YouTube videos through the official API when configured, paste a YouTube video link without an API key, or search Internet Archive audio without an API key. YouTube and Archive playback stay in their respective official embedded players.
 - Adjust volume, shuffle and repeat, seek through tracks, favorite songs, and use the five-band Web Audio equalizer, with presets.
 - Display synchronized lyrics from a user-supplied `.lrc` file and use the lyrics view as a full-screen player.
 - Use keyboard `/` to focus search.
@@ -35,11 +35,14 @@ Musick currently plays local files; it does **not** log in to or stream from Spo
 
 The connection screen describes these dependencies. Do not ask users to enter their third-party passwords into Musick.
 
-## Optional online YouTube video search
+## Free online search and playback
 
-This optional search uses Google's official **YouTube Data API v3** to search public videos and YouTube's official [IFrame Player API](https://developers.google.com/youtube/iframe_api_reference) for playback. It is not YouTube Music search. Videos that cannot be embedded may fail to play; the player reports unavailable or embedding-disabled videos. The videos remain in YouTube's player and never enter Musick's audio element, local library, or playlists.
+Musick provides two options that do not require Google Cloud billing:
 
-To enable online search during local development:
+- **Paste a YouTube video URL:** In **Search → YouTube**, paste a `youtube.com` or `youtu.be` video link and choose **Play link**. This does not need an API key, but you must find the video on YouTube yourself. Playback uses YouTube's official [IFrame Player API](https://developers.google.com/youtube/iframe_api_reference); it does not extract, proxy, or download audio. It is not YouTube Music search, does not access subscriptions, and cannot play videos whose owners or YouTube disallow embedding.
+- **Internet Archive audio search:** In **Search → Internet Archive**, search public Archive.org audio records. Search uses the public [Internet Archive Advanced Search API](https://archive.org/developers/search.html) without an API key. Musick only offers embedded playback when the item metadata declares Public Domain, CC0, CC BY, or CC BY-SA. Other results link to their Archive.org item page instead. Metadata and license declarations can be incomplete or inaccurate; check the source item and license before using or sharing content. Playback stays in Internet Archive's official embedded player.
+
+To enable optional YouTube search by keywords using Google's official **YouTube Data API v3** (not required for pasted video links):
 
 1. In [Google Cloud Console](https://console.cloud.google.com/), create or select a project and enable **YouTube Data API v3**.
 2. Under **APIs & Services → Credentials**, create an API key. Under **API restrictions**, restrict it to **YouTube Data API v3**. Under **Application restrictions**, choose **Websites** and allow only the exact referrers you use, such as `http://localhost:3000/*` and `http://127.0.0.1:3000/*`.
@@ -57,7 +60,7 @@ To enable online search during local development:
    npx serve . -l 3000
    ```
 
-   Open `http://localhost:3000`, go to **Search → YouTube**, enter a query in the top search box, and choose **Search YouTube**. Search is only sent when requested, not on every keystroke. Each search consumes YouTube Data API quota.
+   Open `http://localhost:3000`, go to **Search → YouTube**, enter a query in the top search box, and choose **Search YouTube**. Keyword search is only sent when requested, not on every keystroke. Each search consumes YouTube Data API quota. If Google Cloud asks you to attach a paid billing account, do not proceed; use pasted links or Internet Archive search instead.
 
 For deployment, add only your intended production HTTPS referrer to the API key's website restrictions, such as `https://your-domain.example/*`. GitHub Pages also needs its actual hostname and project path allowed. Keep localhost entries only for development.
 

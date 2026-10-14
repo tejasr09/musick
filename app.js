@@ -34,8 +34,13 @@ let youtubeConfigError = "";
 let onlineSearch = { status: "idle", results: [], error: "", query: "", selectedVideoId: "", playerError: "" };
 let onlineSearchController;
 let onlineSearchRequest = 0;
+let youtubeLinkTitle = "";
+let youtubeLinkError = "";
 let youtubePlayer;
 let youtubePlayerApiPromise;
+let archiveSearch = { status: "idle", results: [], error: "", query: "", selectedId: "" };
+let archiveSearchController;
+let archiveSearchRequest = 0;
 let toastTimer;
 let currentObjectUrl = null;
 let audioContext;
@@ -413,12 +418,19 @@ function renderSidebar() {
 function changeView(view, playlistId = null, addHistory = true) {
   if (currentView === "search" && view !== "search") {
     onlineSearchController?.abort();
+    archiveSearchController?.abort();
     onlineSearchRequest++;
+    archiveSearchRequest++;
     if (onlineSearch.status === "loading") {
       onlineSearch = { status: "idle", results: [], error: "", query: "", selectedVideoId: "", playerError: "" };
     }
+    if (archiveSearch.status === "loading") {
+      archiveSearch = { status: "idle", results: [], error: "", query: "", selectedId: "" };
+    }
     onlineSearch.selectedVideoId = "";
     onlineSearch.playerError = "";
+    archiveSearch.selectedId = "";
+    youtubeLinkTitle = "";
     destroyYouTubePlayer();
   }
   currentView = view;
@@ -500,37 +512,51 @@ function renderSearch() {
   const results = searchQuery.trim() ? tracks.filter(track => track.blob && trackMatches(track, searchQuery.trim())) : [];
   const headerSearch = document.querySelector("#search-input");
   const onlineConfigured = Boolean(youtubeConfig.apiKey);
-  const localResults = `<section><div class="section-heading"><h2>Your library <span class="track-count">${results.length}</span></h2></div>${searchQuery.trim() ? results.length ? trackTable(results) : emptyState("No local matches", "Try another title or artist, or search public YouTube videos.") : emptyState("Search your collection", "Find a song, artist, album, or tag in the music you have added.")}</section>`;
-  const onlineResults = renderOnlineSearchResults();
-  headerSearch.placeholder = searchSource === "youtube" ? "Search YouTube videos…" : "What do you want to play?";
-  headerSearch.setAttribute("aria-label", searchSource === "youtube" ? "Search YouTube videos" : "Search your local music");
+  const localResults = `<section><div class="section-heading"><h2>Your library <span class="track-count">${results.length}</span></h2></div>${searchQuery.trim() ? results.length ? trackTable(results) : emptyState("No local matches", "Try another title or artist, or search public videos or Archive audio.") : emptyState("Search your collection", "Find a song, artist, album, or tag in the music you have added.")}</section>`;
+  const onlineResults = searchSource === "youtube" ? renderOnlineSearchResults() : renderArchiveSearchResults();
+  const searchLabels = {
+    local: ["What do you want to play?", "Search your local music"],
+    youtube: ["Search YouTube videos or paste a link…", "Search YouTube videos or paste a video link"],
+    archive: ["Search Internet Archive audio…", "Search Internet Archive audio"]
+  };
+  headerSearch.placeholder = searchLabels[searchSource][0];
+  headerSearch.setAttribute("aria-label", searchLabels[searchSource][1]);
   content.innerHTML = `
     <div class="page-heading"><div><span class="eyebrow">FIND A FAVORITE</span><h1>Search</h1></div></div>
     <div class="search-source-tabs" role="tablist" aria-label="Search source">
       <button class="search-source-tab ${searchSource === "local" ? "active" : ""}" role="tab" aria-selected="${searchSource === "local"}" data-action="search-source" data-source="local">Your library</button>
       <button class="search-source-tab ${searchSource === "youtube" ? "active" : ""}" role="tab" aria-selected="${searchSource === "youtube"}" data-action="search-source" data-source="youtube">YouTube <span class="youtube-label">VIDEOS</span></button>
+      <button class="search-source-tab ${searchSource === "archive" ? "active" : ""}" role="tab" aria-selected="${searchSource === "archive"}" data-action="search-source" data-source="archive">Internet Archive <span class="archive-license-label">AUDIO</span></button>
     </div>
     ${searchSource === "local" ? localResults : `<form id="online-search-form" class="online-search-form">
-      <span class="youtube-source-mark" aria-hidden="true">▶</span><span>Search public <strong>YouTube videos</strong>. Playback stays in YouTube's embedded player.</span>
-      <button class="primary-button" type="submit" ${!youtubeConfigLoaded || !onlineConfigured ? "disabled" : ""}>Search YouTube</button>
-    </form>${onlineResults}
-    ${onlineConfigured ? "" : `<p class="online-setup-hint">Online search is off until you add a restricted YouTube Data API key to <code>youtube-config.local.json</code>.</p>`}
-    <p class="recommendation-note">This searches YouTube videos, not YouTube Music catalogs, accounts, or subscriptions. Results are not added to your local music library or playlists.</p>`}`;
+      <span class="youtube-source-mark" aria-hidden="true">${searchSource === "youtube" ? "▶" : "♫"}</span><span>${searchSource === "youtube" ? `Search public <strong>YouTube videos</strong>. Playback stays in YouTube's embedded player.` : `Search <strong>Internet Archive audio</strong>. No API key or payment is needed.`}</span>
+      <button class="primary-button" type="submit" ${searchSource === "youtube" && (!youtubeConfigLoaded || !onlineConfigured) ? "disabled" : ""}>${searchSource === "youtube" ? "Search YouTube" : "Search Archive"}</button>
+    </form>${searchSource === "youtube" ? `
+      <form id="youtube-link-form" class="youtube-link-form">
+        <label for="youtube-link-input">Or paste a YouTube video link</label>
+        <div><input id="youtube-link-input" name="url" type="url" placeholder="https://www.youtube.com/watch?v=…" required><button class="secondary-button" type="submit">Play link</button></div>
+        <p class="form-feedback" role="status">${escapeHTML(youtubeLinkError)}</p>
+      </form>` : ""}
+    ${onlineResults}
+    ${searchSource === "youtube" ? `${onlineConfigured ? "" : `<p class="online-setup-hint">Keyword search needs an API key. <a href="https://www.youtube.com/results?search_query=${encodeURIComponent(searchQuery.trim())}" target="_blank" rel="noopener noreferrer">Search YouTube in a new tab</a>, then paste a video link above.</p>`}
+    <p class="recommendation-note">This searches YouTube videos, not YouTube Music catalogs, accounts, or subscriptions. Results play only in YouTube's official player and are not added to your local library or playlists.</p>` : `
+    <p class="recommendation-note">Internet Archive results are hosted by Archive.org. Musick only enables embedded playback when the item metadata declares a supported open license (Public Domain, CC0, CC BY, or CC BY-SA); other items can still be opened at the source. Verify the item and license details before use.</p>`}`}`;
 }
 
 function renderOnlineSearchResults() {
-  if (youtubeConfigError) return onlineSearchState("error", "YouTube settings could not be loaded.", youtubeConfigError);
-  if (!youtubeConfigLoaded) return onlineSearchState("loading", "Checking online search configuration…");
-  if (!youtubeConfig.apiKey) return onlineSearchState("empty", "Online search is turned off.", "Add your restricted YouTube Data API key to youtube-config.local.json to enable it.");
-  if (!searchQuery.trim()) return onlineSearchState("empty", "Search YouTube for a video.", "Type a song, artist, or video in the search box above, then choose Search YouTube. Results play only in YouTube's embedded player.");
-
+  const selectedVideo = onlineSearch.results.find(item => item.id.videoId === onlineSearch.selectedVideoId);
   const player = onlineSearch.selectedVideoId ? `
     <section class="youtube-player-card">
-      <div class="youtube-player-heading"><div><span class="youtube-label">YOUTUBE VIDEO</span><h2>${escapeHTML(onlineSearch.results.find(item => item.id.videoId === onlineSearch.selectedVideoId)?.snippet.title || "YouTube video")}</h2></div><button class="secondary-button" data-action="close-youtube-player">Close player</button></div>
+      <div class="youtube-player-heading"><div><span class="youtube-label">YOUTUBE VIDEO</span><h2>${escapeHTML(selectedVideo?.snippet.title || youtubeLinkTitle || "YouTube video")}</h2></div><button class="secondary-button" data-action="close-youtube-player">Close player</button></div>
       <div class="youtube-player-frame"><div id="youtube-player"></div></div>
       <p id="youtube-player-error" class="youtube-player-error" role="status">${escapeHTML(onlineSearch.playerError || (youtubePlayer ? "" : "Loading YouTube's embedded player…"))}</p>
       <p class="recommendation-note">Playing via YouTube's official embedded player. Musick does not extract or handle YouTube audio.</p>
     </section>` : "";
+
+  if (youtubeConfigError) return `${player}${onlineSearchState("error", "YouTube settings could not be loaded.", youtubeConfigError)}`;
+  if (!youtubeConfigLoaded) return `${player}${onlineSearchState("loading", "Checking online search configuration…")}`;
+  if (!youtubeConfig.apiKey) return `${player}${onlineSearchState("empty", "YouTube search needs an API key.", "You can still play a video without a key: paste its YouTube link above.")}`;
+  if (!searchQuery.trim()) return `${player}${onlineSearchState("empty", "Search YouTube for a video.", "Type a song, artist, or video in the search box above, then choose Search YouTube. Search uses the official YouTube Data API.")}`;
 
   if (onlineSearch.status === "loading") return `${player}${onlineSearchState("loading", "Searching YouTube…")}`;
   if (onlineSearch.status === "error") return `${player}${onlineSearchState("error", "YouTube search failed.", onlineSearch.error)}`;
@@ -538,6 +564,21 @@ function renderOnlineSearchResults() {
   if (!onlineSearch.results.length) return `${player}${onlineSearchState("empty", "Ready to search YouTube.", "Search only runs when you press the button. It does not run on every keystroke.")}`;
 
   return `${player}<section><div class="section-heading"><h2>YouTube results <span class="track-count">${onlineSearch.results.length}</span></h2></div><div class="youtube-results-grid">${onlineSearch.results.map(youtubeResultCard).join("")}</div></section>`;
+}
+
+function renderArchiveSearchResults() {
+  const player = archiveSearch.selectedId ? `
+    <section class="youtube-player-card">
+      <div class="youtube-player-heading"><div><span class="archive-license-label">INTERNET ARCHIVE AUDIO</span><h2>${escapeHTML(archiveSearch.results.find(item => item.identifier === archiveSearch.selectedId)?.title || "Archive audio")}</h2></div><button class="secondary-button" data-action="close-archive-player">Close player</button></div>
+      <div class="youtube-player-frame archive-player-frame"><iframe title="Internet Archive audio player" src="https://archive.org/embed/${encodeURIComponent(archiveSearch.selectedId)}" allow="autoplay; fullscreen" loading="lazy"></iframe></div>
+      <p class="recommendation-note">Playback is provided by Internet Archive's embedded player. Musick does not download or re-host this audio.</p>
+    </section>` : "";
+  if (archiveSearch.status === "loading") return `${player}${onlineSearchState("loading", "Searching Internet Archive…")}`;
+  if (archiveSearch.status === "error") return `${player}${onlineSearchState("error", "Internet Archive search failed.", archiveSearch.error)}`;
+  if (archiveSearch.status === "no-results") return `${player}${onlineSearchState("empty", "No Archive audio found.", `No audio results for “${searchQuery.trim()}”. Try another search.`)}`;
+  if (!archiveSearch.results.length) return `${player}${onlineSearchState("empty", "Search Internet Archive audio.", "Search public archive records by title or creator. No API key or payment is required.")}`;
+
+  return `${player}<section><div class="section-heading"><h2>Internet Archive audio <span class="track-count">${archiveSearch.results.length}</span></h2></div><div class="youtube-results-grid">${archiveSearch.results.map(archiveResultCard).join("")}</div></section>`;
 }
 
 function onlineSearchState(kind, title, message = "") {
@@ -562,10 +603,44 @@ function youtubeResultCard(video) {
   </article>`;
 }
 
+function archiveLicenseStatus(value) {
+  if (!value || typeof value !== "string") return "";
+  try {
+    const license = new URL(value);
+    if (!["http:", "https:"].includes(license.protocol) || license.hostname.toLowerCase() !== "creativecommons.org") return "";
+    const path = license.pathname.toLowerCase();
+    if (/^\/publicdomain\/(zero|mark)\/(?:1\.0\/?)?$/.test(path)) return "Public Domain / CC0";
+    const match = path.match(/^\/licenses\/(by|by-sa|by-nc|by-nd|by-nc-sa|by-nc-nd)\/(\d+\.\d+)\/?$/);
+    if (!match || !["by", "by-sa"].includes(match[1])) return "";
+    return match[1] === "by" ? `CC BY ${match[2]}` : `CC BY-SA ${match[2]}`;
+  } catch {
+    return "";
+  }
+}
+
+function archiveResultCard(item) {
+  const creator = Array.isArray(item.creator) ? item.creator.join(", ") : item.creator || "Creator not listed";
+  const license = archiveLicenseStatus(item.licenseurl);
+  const identifier = encodeURIComponent(item.identifier);
+  return `<article class="youtube-result archive-result">
+    <div class="archive-result-mark" aria-hidden="true">♫</div>
+    <div class="youtube-result-copy"><div class="youtube-result-label"><span class="archive-license-label">INTERNET ARCHIVE</span><span>${escapeHTML(license || "License not verified")}</span></div>
+      <h3>${escapeHTML(item.title || item.identifier)}</h3><p>${escapeHTML(creator)}</p>
+      <div class="archive-result-actions">${license ? `<button class="secondary-button" data-action="play-archive" data-id="${escapeHTML(item.identifier)}">Play in Archive</button>` : `<span class="recommendation-note">Musick won't embed playback without a supported open license.</span>`}
+      <a class="secondary-button" href="https://archive.org/details/${identifier}" target="_blank" rel="noopener noreferrer">View source</a></div>
+    </div>
+  </article>`;
+}
+
 function searchSourceChanged(source) {
-  if (!["local", "youtube"].includes(source) || source === searchSource) return;
+  if (!["local", "youtube", "archive"].includes(source) || source === searchSource) return;
+  onlineSearchController?.abort();
+  archiveSearchController?.abort();
   searchSource = source;
-  if (source === "youtube") onlineSearch = { status: "idle", results: [], error: "", query: "", selectedVideoId: "", playerError: "" };
+  onlineSearch = { status: "idle", results: [], error: "", query: "", selectedVideoId: "", playerError: "" };
+  archiveSearch = { status: "idle", results: [], error: "", query: "", selectedId: "" };
+  youtubeLinkTitle = "";
+  youtubeLinkError = "";
   destroyYouTubePlayer();
   renderSearch();
 }
@@ -636,6 +711,74 @@ async function searchYouTubeVideos() {
   }
 }
 
+async function searchArchiveAudio() {
+  const query = searchQuery.trim();
+  if (!query) {
+    archiveSearch = { status: "idle", results: [], error: "", query: "", selectedId: "" };
+    renderSearch();
+    return;
+  }
+  archiveSearchController?.abort();
+  archiveSearchController = new AbortController();
+  const requestId = ++archiveSearchRequest;
+  archiveSearch = { status: "loading", results: [], error: "", query, selectedId: "" };
+  renderSearch();
+  try {
+    const phrase = query.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+    const parameters = new URLSearchParams();
+    parameters.set("q", `mediatype:audio AND (title:"${phrase}" OR creator:"${phrase}")`);
+    ["identifier", "title", "creator", "licenseurl"].forEach(field => parameters.append("fl[]", field));
+    parameters.set("rows", "12");
+    parameters.set("page", "1");
+    parameters.set("output", "json");
+    const response = await fetch(`https://archive.org/advancedsearch.php?${parameters}`, { signal: archiveSearchController.signal });
+    if (!response.ok) throw new Error(`Internet Archive returned HTTP ${response.status}.`);
+    const body = await response.json();
+    if (body.responseHeader?.status !== 0 || !Array.isArray(body.response?.docs)) throw new Error("Internet Archive returned an unexpected search response.");
+    if (requestId !== archiveSearchRequest) return;
+    const results = body.response.docs.filter(item => typeof item.identifier === "string");
+    archiveSearch = { status: results.length ? "results" : "no-results", results, error: "", query, selectedId: "" };
+    renderSearch();
+  } catch (error) {
+    if (error.name === "AbortError" || requestId !== archiveSearchRequest) return;
+    archiveSearch = { status: "error", results: [], error: error.message, query, selectedId: "" };
+    renderSearch();
+  }
+}
+
+function playYouTubeLink(value) {
+  youtubeLinkError = "";
+  try {
+    if (typeof value !== "string") throw new Error("Paste a YouTube video link.");
+    const url = new URL(value.trim());
+    const host = url.hostname.toLowerCase().replace(/^www\./, "");
+    if (!["youtube.com", "m.youtube.com", "youtu.be"].includes(host)) throw new Error("Paste a link from youtube.com or youtu.be.");
+    let videoId = "";
+    if (host === "youtu.be") videoId = url.pathname.split("/").filter(Boolean)[0] || "";
+    else if (url.pathname === "/watch") videoId = url.searchParams.get("v") || "";
+    else if (/^\/(embed|shorts)\/[^/]+/.test(url.pathname)) videoId = url.pathname.split("/")[2] || "";
+    if (!/^[A-Za-z0-9_-]{11}$/.test(videoId)) throw new Error("That link does not contain a valid YouTube video ID.");
+    onlineSearchController?.abort();
+    onlineSearchRequest++;
+    onlineSearch = { status: "idle", results: [], error: "", query: "", selectedVideoId: videoId, playerError: "" };
+    youtubeLinkTitle = "YouTube video";
+    destroyYouTubePlayer();
+    renderSearch();
+    playYouTubeVideo(videoId);
+  } catch (error) {
+    youtubeLinkError = error.message;
+    renderSearch();
+  }
+}
+
+function playArchiveItem(identifier) {
+  const item = archiveSearch.results.find(result => result.identifier === identifier);
+  if (!item || !archiveLicenseStatus(item.licenseurl)) return;
+  audio.pause();
+  archiveSearch.selectedId = identifier;
+  renderSearch();
+}
+
 function loadYouTubeIframeApi() {
   if (window.YT?.Player) return Promise.resolve(window.YT);
   if (youtubePlayerApiPromise) return youtubePlayerApiPromise;
@@ -658,8 +801,7 @@ function loadYouTubeIframeApi() {
 }
 
 async function playYouTubeVideo(videoId) {
-  const video = onlineSearch.results.find(item => item.id.videoId === videoId);
-  if (!video) return;
+  if (!/^[A-Za-z0-9_-]{11}$/.test(videoId)) return;
   audio.pause();
   onlineSearch.selectedVideoId = videoId;
   onlineSearch.playerError = "";
@@ -1161,9 +1303,15 @@ function handleAction(button) {
   else if (action === "connections") changeView("connections");
   else if (action === "search-source") searchSourceChanged(button.dataset.source);
   else if (action === "play-youtube") playYouTubeVideo(id);
+  else if (action === "play-archive") playArchiveItem(id);
+  else if (action === "close-archive-player") {
+    archiveSearch.selectedId = "";
+    renderSearch();
+  }
   else if (action === "close-youtube-player") {
     onlineSearch.selectedVideoId = "";
     onlineSearch.playerError = "";
+    youtubeLinkTitle = "";
     destroyYouTubePlayer();
     renderSearch();
   }
@@ -1246,7 +1394,13 @@ document.addEventListener("click", event => {
 content.addEventListener("submit", async event => {
   if (event.target.id === "online-search-form") {
     event.preventDefault();
-    searchYouTubeVideos();
+    if (searchSource === "youtube") searchYouTubeVideos();
+    else if (searchSource === "archive") searchArchiveAudio();
+    return;
+  }
+  if (event.target.id === "youtube-link-form") {
+    event.preventDefault();
+    playYouTubeLink(new FormData(event.target).get("url"));
     return;
   }
   if (event.target.id !== "auth-form") return;
@@ -1306,7 +1460,12 @@ document.querySelector("#search-input").addEventListener("input", event => {
       onlineSearchController?.abort();
       onlineSearchRequest++;
       onlineSearch = { status: "idle", results: [], error: "", query: "", selectedVideoId: "", playerError: "" };
+      youtubeLinkTitle = "";
       destroyYouTubePlayer();
+    } else if (searchSource === "archive") {
+      archiveSearchController?.abort();
+      archiveSearchRequest++;
+      archiveSearch = { status: "idle", results: [], error: "", query: "", selectedId: "" };
     }
     renderContent();
   }
@@ -1316,6 +1475,9 @@ document.addEventListener("keydown", event => {
   if (event.key === "Enter" && event.target.id === "search-input" && currentView === "search" && searchSource === "youtube") {
     event.preventDefault();
     searchYouTubeVideos();
+  } else if (event.key === "Enter" && event.target.id === "search-input" && currentView === "search" && searchSource === "archive") {
+    event.preventDefault();
+    searchArchiveAudio();
   } else if (event.key === "/" && !["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement.tagName)) {
     event.preventDefault();
     document.querySelector("#search-input").focus();
