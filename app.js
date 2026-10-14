@@ -5,6 +5,7 @@ const DB_VERSION = 1;
 const TRACK_STORE = "tracks";
 const PLAYLISTS_KEY = "musick-playlists-v1";
 const EQ_KEY = "musick-equalizer-v1";
+const SESSION_KEY = "musick-supabase-session-v1";
 const EQ_FREQUENCIES = [60, 230, 910, 3600, 14000];
 const COVER_PALETTES = [
   ["#805ba9", "#33213f"], ["#397c78", "#183d4c"], ["#aa6957", "#4f293c"],
@@ -35,6 +36,254 @@ let filters = [];
 let lyricsEntries = [];
 let historyStack = [{ view: "home", playlistId: null }];
 let historyIndex = 0;
+const supabaseConfig = window.MUSICK_SUPABASE;
+let authSession = loadAuthSession();
+let cloudSyncTask = Promise.resolve();
+let cloudSyncTimer;
+let pendingAuthMode = "signin";
+let authFeedback = "";
+
+function loadAuthSession() {
+  try {
+    const value = JSON.parse(localStorage.getItem(SESSION_KEY) || "null");
+    return value && typeof value.access_token === "string" && typeof value.refresh_token === "string" ? value : null;
+  } catch (error) {
+    console.error("Could not restore the Supabase session.", error);
+    return null;
+  }
+}
+
+function saveAuthSession(session) {
+  authSession = session;
+  try {
+    if (session) localStorage.setItem(SESSION_KEY, JSON.stringify(session));
+    else localStorage.removeItem(SESSION_KEY);
+  } catch (error) {
+    authSession = null;
+    throw new Error(`Could not store the sign-in session in this browser: ${error.message}`);
+  }
+  renderProfile();
+}
+
+function renderProfile() {
+  const label = document.querySelector("#profile-label");
+  const avatar = document.querySelector(".profile-avatar");
+  if (!label || !avatar) return;
+  const email = authSession?.user?.email;
+  label.textContent = email || "Connect services";
+  avatar.textContent = email ? email.slice(0, 1).toUpperCase() : "M";
+  avatar.title = email || "Connect services";
+}
+
+function supabaseUrl(path) {
+  if (!supabaseConfig?.url || !supabaseConfig?.publishableKey) throw new Error("Supabase is not configured.");
+  return `${supabaseConfig.url}${path}`;
+}
+
+async function supabaseFetch(path, options = {}, requireSession = true) {
+  if (requireSession && !authSession) throw new Error("Sign in to sync your playlists.");
+  const headers = new Headers(options.headers || {});
+  headers.set("apikey", supabaseConfig.publishableKey);
+  headers.set("Content-Type", "application/json");
+  if (requireSession) headers.set("Authorization", `Bearer ${authSession.access_token}`);
+  else headers.set("Authorization", `Bearer ${supabaseConfig.publishableKey}`);
+  const response = await fetch(supabaseUrl(path), { ...options, headers });
+  if (!response.ok) {
+    const detail = await response.json().catch(() => ({}));
+    throw new Error(detail.msg || detail.message || detail.error_description || detail.error || `Supabase returned HTTP ${response.status}.`);
+  }
+  return response.status === 204 ? null : response.json();
+}
+
+async function refreshAuthSession() {
+  if (!authSession?.refresh_token) return false;
+  try {
+    const session = await supabaseFetch("/auth/v1/token?grant_type=refresh_token", {
+      method: "POST",
+      body: JSON.stringify({ refresh_token: authSession.refresh_token })
+    }, false);
+    if (!session.access_token || !session.refresh_token) throw new Error("Supabase did not return a refreshed session.");
+    saveAuthSession({ ...session, expires_at: Math.floor(Date.now() / 1000) + (session.expires_in || 3600) });
+    return true;
+  } catch (error) {
+    console.error("Could not refresh the Supabase session.", error);
+    saveAuthSession(null);
+    return false;
+  }
+}
+
+async function ensureAuthSession() {
+  if (!authSession) return false;
+  if (authSession.expires_at && authSession.expires_at > Math.floor(Date.now() / 1000) + 60) return true;
+  return refreshAuthSession();
+}
+
+async function authenticate(mode, email, password) {
+  const path = mode === "signup" ? "/auth/v1/signup" : "/auth/v1/token?grant_type=password";
+  const result = await supabaseFetch(path, {
+    method: "POST",
+    body: JSON.stringify({ email, password })
+  }, false);
+  if (!result.access_token || !result.refresh_token) {
+    authFeedback = "Check your email for a confirmation link, then sign in here.";
+    renderConnections();
+    return false;
+  }
+  saveAuthSession({ ...result, expires_at: Math.floor(Date.now() / 1000) + (result.expires_in || 3600) });
+  try {
+    await synchronizeCloudPlaylists();
+    authFeedback = "Signed in. Your playlist metadata is synced with Supabase.";
+    showToast("Signed in and playlists synced.");
+  } catch (error) {
+    authFeedback = `Signed in, but playlist sync failed: ${error.message}`;
+    showToast("Signed in, but playlist sync failed. Check the message below.");
+    console.error("Initial Supabase playlist sync failed.", error);
+  }
+  renderConnections();
+  return true;
+}
+
+async function signOut() {
+  const session = authSession;
+  if (session?.access_token) {
+    try {
+      await supabaseFetch("/auth/v1/logout", { method: "POST" }, true);
+    } catch (error) {
+      console.error("The local session was cleared, but the remote sign-out failed.", error);
+    }
+  }
+  saveAuthSession(null);
+  authFeedback = "Signed out. This device's local music and playlists are unchanged.";
+  renderConnections();
+}
+
+function queueCloudSync() {
+  if (!authSession) return;
+  clearTimeout(cloudSyncTimer);
+  cloudSyncTimer = setTimeout(() => {
+    cloudSyncTask = cloudSyncTask.then(async () => {
+      if (!(await ensureAuthSession())) return;
+      await synchronizeCloudPlaylists();
+    }).catch(error => {
+      showToast(`Playlist sync failed: ${error.message}`);
+      console.error("Supabase playlist sync failed.", error);
+    });
+  }, 500);
+}
+
+function cloudTrackMetadata(track, userId) {
+  return {
+    id: track.id,
+    user_id: userId,
+    title: track.title || "Untitled",
+    artist: track.artist || "",
+    album: track.album || "",
+    source: "local",
+    source_track_id: null
+  };
+}
+
+async function synchronizeCloudPlaylists() {
+  if (!(await ensureAuthSession())) return;
+  const userId = authSession.user?.id;
+  if (!userId) throw new Error("Supabase session has no user ID.");
+
+  const [remotePlaylists, remoteEntries, remoteTracks] = await Promise.all([
+    supabaseFetch("/rest/v1/playlists?select=id,user_id,name,color,created_at,updated_at&order=created_at.asc"),
+    supabaseFetch("/rest/v1/playlist_tracks?select=playlist_id,track_id,position&order=position.asc"),
+    supabaseFetch("/rest/v1/tracks?select=id,title,artist,album,source,source_track_id,created_at")
+  ]);
+  const knownTrackIds = new Set(tracks.map(track => track.id));
+  const trackById = new Map(tracks.map(track => [track.id, track]));
+
+  for (const remote of remoteTracks) {
+    if (knownTrackIds.has(remote.id)) continue;
+    const cloudTrack = {
+      ...remote,
+      fileName: "",
+      duration: 0,
+      playCount: 0,
+      favorite: false,
+      addedAt: remote.created_at ? Date.parse(remote.created_at) : Date.now(),
+      blob: null,
+      isCloudOnly: true
+    };
+    trackById.set(remote.id, cloudTrack);
+    tracks.push(cloudTrack);
+  }
+
+  const entriesByPlaylist = new Map();
+  for (const entry of remoteEntries) {
+    if (!entriesByPlaylist.has(entry.playlist_id)) entriesByPlaylist.set(entry.playlist_id, []);
+    entriesByPlaylist.get(entry.playlist_id).push(entry);
+  }
+  const localById = new Map(playlists.map(playlist => [playlist.id, playlist]));
+  for (const remote of remotePlaylists) {
+    const remoteIds = (entriesByPlaylist.get(remote.id) || []).map(entry => entry.track_id);
+    const local = localById.get(remote.id);
+    if (local) {
+      const ids = new Set([...local.trackIds, ...remoteIds]);
+      local.trackIds = [...ids];
+    } else {
+      const playlist = { ...remote, createdAt: Date.parse(remote.created_at) || Date.now(), trackIds: remoteIds };
+      playlists.push(playlist);
+      localById.set(playlist.id, playlist);
+    }
+  }
+
+  const localTrackIds = new Set(playlists.flatMap(playlist => playlist.trackIds));
+  const upsertTracks = [...localTrackIds].map(id => trackById.get(id)).filter(Boolean).map(track => cloudTrackMetadata(track, userId));
+  if (upsertTracks.length) {
+    await supabaseFetch("/rest/v1/tracks?on_conflict=id", {
+      method: "POST",
+      headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+      body: JSON.stringify(upsertTracks)
+    });
+  }
+
+  if (playlists.length) {
+    await supabaseFetch("/rest/v1/playlists?on_conflict=id", {
+      method: "POST",
+      headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+      body: JSON.stringify(playlists.map(playlist => ({
+        id: playlist.id,
+        user_id: userId,
+        name: playlist.name,
+        color: /^#[\da-f]{6}$/i.test(playlist.color || "") ? playlist.color : "#a980ff"
+      })))
+    });
+    const playlistIds = playlists.map(playlist => playlist.id);
+    await supabaseFetch(`/rest/v1/playlist_tracks?playlist_id=in.(${playlistIds.join(",")})`, {
+      method: "DELETE",
+      headers: { Prefer: "return=minimal" }
+    });
+    const entries = playlists.flatMap(playlist => [...new Set(playlist.trackIds)].map((trackId, position) => ({
+      user_id: userId, playlist_id: playlist.id, track_id: trackId, position
+    })));
+    if (entries.length) {
+      await supabaseFetch("/rest/v1/playlist_tracks", {
+        method: "POST",
+        headers: { Prefer: "return=minimal" },
+        body: JSON.stringify(entries)
+      });
+    }
+  }
+
+  savePlaylists();
+  renderSidebar();
+  if (currentView !== "connections") renderContent();
+}
+
+function deleteCloudPlaylist(id) {
+  if (!authSession) return;
+  cloudSyncTask = cloudSyncTask.then(async () => {
+    if (!(await ensureAuthSession())) return;
+    await supabaseFetch(`/rest/v1/playlists?id=eq.${encodeURIComponent(id)}`, { method: "DELETE" });
+  }).catch(error => {
+    showToast(`Playlist removed locally, but cloud deletion failed: ${error.message}`);
+    console.error("Could not delete the cloud playlist.", error);
+  });
+}
 
 function loadPlaylists() {
   try {
@@ -178,7 +427,8 @@ function trackMatches(track, query) {
 }
 
 function renderHome() {
-  const recent = tracks.filter(track => track.lastPlayed).sort((a, b) => b.lastPlayed - a.lastPlayed).slice(0, 6);
+  const localTracks = tracks.filter(track => track.blob);
+  const recent = localTracks.filter(track => track.lastPlayed).sort((a, b) => b.lastPlayed - a.lastPlayed).slice(0, 6);
   const recommendations = recommendTracks();
   content.innerHTML = `
     <div class="welcome-row">
@@ -190,7 +440,7 @@ function renderHome() {
       <div class="hero-visual" aria-hidden="true">♫</div>
     </section>
     ${recent.length ? `<section><div class="section-heading"><h2>Pick up where you left off</h2><button class="quiet-button" data-view="library">Your library →</button></div><div class="quick-grid">${recent.map(track => quickCard(track, "recent")).join("")}</div></section>` : ""}
-    <section><div class="section-heading"><div><h2>Made for your library</h2><p>${tracks.length ? "A little inspiration from your listening." : "Your personal picks get better as you listen."}</p></div></div>
+    <section><div class="section-heading"><div><h2>Made for your library</h2><p>${localTracks.length ? "A little inspiration from your listening." : "Your personal picks get better as you listen."}</p></div></div>
       ${recommendations.length ? `<div class="quick-grid">${recommendations.map(track => quickCard(track, "recommendation")).join("")}</div><p class="recommendation-note">Personalized from your listening history and library. Recommendations run on this device.</p>` : emptyState("Your next favorite is waiting", "Add some music and play a few tracks. Musick will use your own library and listening history to suggest what to hear next.", "Add music", "add-files")}
     </section>`;
 }
@@ -206,10 +456,11 @@ function emptyState(title, message, buttonLabel = "Add music", action = "add-fil
 }
 
 function renderLibrary() {
-  const sorted = [...tracks].sort((a, b) => b.addedAt - a.addedAt);
+  const localTracks = tracks.filter(track => track.blob);
+  const sorted = [...localTracks].sort((a, b) => b.addedAt - a.addedAt);
   content.innerHTML = `
     <div class="page-heading"><div><span class="eyebrow">ALL YOUR MUSIC</span><h1>Your library</h1></div><div class="button-row"><button class="secondary-button" data-action="import-playlist">Import .m3u</button><button class="primary-button" data-action="add-files">＋ Add music</button></div></div>
-    ${tracks.length ? `<div class="section-heading"><h2>Songs <span class="track-count">${tracks.length}</span></h2><button class="quiet-button" data-action="create-playlist">＋ New playlist</button></div>${trackTable(sorted)}` : emptyState("Your library starts here", "Add music files from your device. Audio is stored in this browser and is never uploaded.", "＋ Add music")}
+    ${localTracks.length ? `<div class="section-heading"><h2>Songs <span class="track-count">${localTracks.length}</span></h2><button class="quiet-button" data-action="create-playlist">＋ New playlist</button></div>${trackTable(sorted)}` : emptyState("Your library starts here", "Add music files from your device. Audio is stored in this browser and is never uploaded.", "＋ Add music")}
     <section><div class="section-heading"><h2>Your playlists <span class="track-count">${playlists.length}</span></h2><button class="quiet-button" data-action="create-playlist">＋ Create playlist</button></div>
       ${playlists.length ? `<div class="quick-grid">${playlists.map(playlistCard).join("")}</div>` : `<p class="recommendation-note">Make a playlist, add tracks, and give it your own color.</p>`}
     </section>`;
@@ -224,7 +475,7 @@ function playlistCard(playlist) {
 }
 
 function renderSearch() {
-  const results = searchQuery.trim() ? tracks.filter(track => trackMatches(track, searchQuery.trim())) : [];
+  const results = searchQuery.trim() ? tracks.filter(track => track.blob && trackMatches(track, searchQuery.trim())) : [];
   content.innerHTML = `
     <div class="page-heading"><div><span class="eyebrow">FIND A FAVORITE</span><h1>Search</h1></div></div>
     ${searchQuery.trim() ? `<div class="section-heading"><h2>Results <span class="track-count">${results.length}</span></h2></div>${results.length ? trackTable(results) : emptyState("No matches yet", "Try another title, artist, album, or tag.")}` : emptyState("Search your collection", "Find a song, artist, album, or tag in the music you have added.")}`;
@@ -267,16 +518,30 @@ function trackTable(items, removable = false) {
 }
 
 function renderConnections() {
+  const email = authSession?.user?.email;
+  const authCard = email ? `
+    <article class="auth-card signed-in">
+      <div><span class="eyebrow">SUPABASE ACCOUNT</span><h2>Signed in</h2><p>Playlist sync requires the database migration. Audio files and lyrics stay on this device.</p><span class="connection-state">Signed in as ${escapeHTML(email)}</span></div>
+      <button class="secondary-button" data-action="sign-out">Sign out</button>
+    </article>` : `
+    <form id="auth-form" class="auth-card">
+      <div><span class="eyebrow">SUPABASE ACCOUNT</span><h2>${pendingAuthMode === "signup" ? "Create your account" : "Sign in to Musick"}</h2><p>Sync playlist names, colors, and track lists between devices after the database migration is applied. Audio stays local.</p></div>
+      <label for="auth-email">Email</label><input id="auth-email" name="email" type="email" autocomplete="email" required maxlength="254" placeholder="you@example.com">
+      <label for="auth-password">Password</label><input id="auth-password" name="password" type="password" autocomplete="${pendingAuthMode === "signup" ? "new-password" : "current-password"}" required minlength="8" maxlength="128" placeholder="At least 8 characters">
+      <div class="auth-actions"><button class="primary-button" type="submit">${pendingAuthMode === "signup" ? "Create account" : "Sign in"}</button><button class="quiet-button" type="button" data-action="toggle-auth-mode">${pendingAuthMode === "signup" ? "Already have an account? Sign in" : "New to Musick? Create account"}</button></div>
+      <p id="auth-feedback" class="auth-feedback" role="status">${escapeHTML(authFeedback)}</p>
+    </form>`;
   content.innerHTML = `
     <div class="page-heading"><div><span class="eyebrow">YOUR OTHER MUSIC APPS</span><h1>Connect a service</h1></div></div>
-    <p class="recommendation-note">Musick is open source, but connecting, importing, and streaming depend on each service's official APIs, account permissions, and licensing. No account credentials are collected by this app.</p>
+    ${authCard}
+    <p class="recommendation-note">Musick is open source, but connecting, importing, and streaming depend on each service's official APIs, account permissions, and licensing. Music-service passwords are never collected by this app.</p>
     <div class="connections-grid">
       ${connectionCard("S", "Spotify", "Import playlist and library metadata with an approved Spotify developer app. Spotify does not provide unrestricted lossless streaming to independent players.", "Developer app and OAuth setup required")}
       ${connectionCard("A", "Apple Music", "Apple MusicKit can provide catalog access and subscriber playback when configured with an Apple developer token and a user's authorization.", "Apple developer token required")}
       ${connectionCard("▶", "YouTube Music", "YouTube Music does not offer a general public API for third-party account login, playlist import, or music streaming.", "No official public music API")}
     </div>
     <div class="info-callout"><strong>Streaming & subscriptions:</strong> Musick cannot read subscription status or bypass DRM. A service must explicitly support playback and account checks through its official SDK. Your local audio works now; provider connections can be added when you choose a service and supply its developer credentials.</div>
-    <section><div class="section-heading"><h2>Backend</h2></div><p class="recommendation-note">Supabase is not connected yet. Add your project URL and anon key when you are ready to configure sync; never put a service-role key in a client app.</p></section>`;
+    <section><div class="section-heading"><h2>Backend</h2></div><p class="recommendation-note">${email ? "Supabase sign-in is active. Playlist metadata syncs after the database migration has been applied; the audio library stays on this device." : "Sign in above to sync playlist metadata after the database migration has been applied. Never put a service-role key in a client app."}</p></section>`;
 }
 
 function connectionCard(mark, name, description, state) {
@@ -284,7 +549,7 @@ function connectionCard(mark, name, description, state) {
 }
 
 function recommendTracks() {
-  const eligible = tracks.filter(track => track.id !== currentTrackId);
+  const eligible = tracks.filter(track => track.blob && track.id !== currentTrackId);
   if (!eligible.length) return [];
   const recentlyPlayed = new Set([...tracks].filter(track => track.lastPlayed).sort((a, b) => b.lastPlayed - a.lastPlayed).slice(0, 4).map(track => track.id));
   const favoriteArtists = new Set(tracks.filter(track => track.favorite || (track.playCount || 0) > 1).map(track => track.artist.toLowerCase()));
@@ -390,6 +655,10 @@ function saveEqualizer() {
 async function playTrack(id, collection = tracks) {
   const track = tracks.find(item => item.id === id);
   if (!track) return;
+  if (!track.blob) {
+    showToast("This playlist entry is synced, but its audio file is only available on another device.");
+    return;
+  }
   if (currentTrackId === id && audio.src) {
     try { await ensureAudioGraph(); await audio.play(); }
     catch (error) { showToast(`Playback failed: ${error.message}`); }
@@ -419,10 +688,10 @@ async function playTrack(id, collection = tracks) {
 function getQueue() {
   if (currentView === "playlist") {
     const playlist = playlists.find(item => item.id === activePlaylistId);
-    if (playlist) return playlist.trackIds.filter(id => tracks.some(track => track.id === id));
+    if (playlist) return playlist.trackIds.filter(id => tracks.some(track => track.id === id && track.blob));
   }
-  if (currentView === "search" && searchQuery.trim()) return tracks.filter(track => trackMatches(track, searchQuery.trim())).map(track => track.id);
-  return tracks.map(track => track.id);
+  if (currentView === "search" && searchQuery.trim()) return tracks.filter(track => track.blob && trackMatches(track, searchQuery.trim())).map(track => track.id);
+  return tracks.filter(track => track.blob).map(track => track.id);
 }
 
 function playNext(direction = 1) {
@@ -491,6 +760,7 @@ function createPlaylist() {
   const playlist = { id: crypto.randomUUID(), name: trimmed, color: "#a980ff", trackIds: [], createdAt: Date.now() };
   playlists.push(playlist);
   savePlaylists();
+  queueCloudSync();
   renderSidebar();
   changeView("playlist", playlist.id);
 }
@@ -509,6 +779,7 @@ function addToPlaylist(track) {
   if (playlist.trackIds.includes(track.id)) { showToast("That song is already in this playlist."); return; }
   playlist.trackIds.push(track.id);
   savePlaylists();
+  queueCloudSync();
   renderSidebar();
   renderContent();
   showToast(`Added to ${playlist.name}.`);
@@ -597,6 +868,7 @@ async function importM3u(file) {
   const playlist = { id: crypto.randomUUID(), name, color: "#a980ff", trackIds: matched.map(track => track.id), createdAt: Date.now() };
   playlists.push(playlist);
   savePlaylists();
+  queueCloudSync();
   renderSidebar();
   changeView("playlist", playlist.id);
   if (!matched.length) showToast("Playlist imported, but no entries matched tracks in your local library.");
@@ -625,12 +897,13 @@ function handleAction(button) {
     if (!playlist) return;
     playlist.trackIds = playlist.trackIds.filter(trackId => trackId !== id);
     savePlaylists();
+    queueCloudSync();
     renderSidebar();
     renderContent();
   }
   else if (action === "play-playlist") {
     const playlist = playlists.find(item => item.id === id);
-    const first = playlist && playlist.trackIds.find(trackId => tracks.some(track => track.id === trackId));
+    const first = playlist && playlist.trackIds.find(trackId => tracks.some(track => track.id === trackId && track.blob));
     if (first) playTrack(first);
     else showToast("Add music to this playlist before playing it.");
   }
@@ -641,13 +914,13 @@ function handleAction(button) {
     if (name === null) return;
     if (!name.trim()) { showToast("Playlist name cannot be empty."); return; }
     playlist.name = name.trim();
-    savePlaylists(); renderSidebar(); renderContent();
+    savePlaylists(); queueCloudSync(); renderSidebar(); renderContent();
   }
   else if (action === "delete-playlist") {
     const playlist = playlists.find(item => item.id === id);
     if (!playlist || !window.confirm(`Delete "${playlist.name}"? Your music files will not be deleted.`)) return;
     playlists = playlists.filter(item => item.id !== id);
-    savePlaylists(); renderSidebar(); changeView("library");
+    savePlaylists(); deleteCloudPlaylist(id); renderSidebar(); changeView("library");
     showToast("Playlist deleted. Your music is still in your library.");
   }
   else if (action === "export-playlist") {
@@ -658,6 +931,12 @@ function handleAction(button) {
   }
   else if (action === "import-playlist") document.querySelector("#playlist-file").click();
   else if (action === "connections") changeView("connections");
+  else if (action === "sign-out") signOut();
+  else if (action === "toggle-auth-mode") {
+    pendingAuthMode = pendingAuthMode === "signin" ? "signup" : "signin";
+    authFeedback = "";
+    renderConnections();
+  }
   else if (action === "connection-info") showToast(`${button.dataset.service} setup needs official API access and developer credentials.`);
   else if (action === "play-pause") {
     if (!currentTrackId) { showToast("Add a song to your library to start listening."); return; }
@@ -726,6 +1005,27 @@ document.addEventListener("click", event => {
     return;
   }
   handleAction(button);
+});
+
+content.addEventListener("submit", async event => {
+  if (event.target.id !== "auth-form") return;
+  event.preventDefault();
+  const form = event.target;
+  const submitButton = form.querySelector('[type="submit"]');
+  submitButton.disabled = true;
+  const feedback = form.querySelector("#auth-feedback");
+  feedback.textContent = "";
+  try {
+    const email = new FormData(form).get("email");
+    const password = new FormData(form).get("password");
+    await authenticate(pendingAuthMode, String(email || "").trim(), String(password || ""));
+  } catch (error) {
+    feedback.textContent = error.message;
+    console.error("Supabase authentication failed.", error);
+  } finally {
+    const newSubmitButton = content.querySelector('#auth-form [type="submit"]');
+    if (newSubmitButton) newSubmitButton.disabled = false;
+  }
 });
 
 document.querySelector("#audio-files").addEventListener("change", async event => {
@@ -811,6 +1111,7 @@ content.addEventListener("input", event => {
   if (playlist) {
     playlist.color = event.target.value;
     savePlaylists();
+    queueCloudSync();
     renderSidebar();
   }
 });
@@ -877,6 +1178,7 @@ content.addEventListener("drop", event => {
     playlist.trackIds.splice(from, 1);
     playlist.trackIds.splice(to, 0, draggedTrackId);
     savePlaylists();
+    queueCloudSync();
     renderContent();
   }
   draggedTrackId = null;
@@ -894,16 +1196,24 @@ document.addEventListener("fullscreenchange", () => {
 async function initialize() {
   audio.volume = 0.8;
   applySavedEqualizer();
+  renderProfile();
   renderSidebar();
   syncNowPlaying();
   try {
     if (!("indexedDB" in window)) throw new Error("This browser does not support local music storage.");
     database = await openDatabase();
     tracks = await readTracks();
-    for (const playlist of playlists) {
-      playlist.trackIds = playlist.trackIds.filter(id => tracks.some(track => track.id === id));
-    }
     savePlaylists();
+    renderSidebar();
+    renderContent();
+    if (authSession) {
+      try {
+        if (await ensureAuthSession()) await synchronizeCloudPlaylists();
+      } catch (error) {
+        showToast(`Could not sync playlists: ${error.message}`);
+        console.error("Initial Supabase playlist sync failed.", error);
+      }
+    }
     renderSidebar();
     renderContent();
   } catch (error) {

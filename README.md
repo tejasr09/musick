@@ -48,7 +48,9 @@ supabase db push
 
 The CLI will ask for your Supabase database password when needed. You can instead paste [`supabase/schema.sql`](./supabase/schema.sql) into the project's SQL Editor in the Supabase Dashboard.
 
-The static web app does not yet connect to Supabase for sign-in or syncing. The project URL and ID are public project identifiers; the Supabase **publishable key** (formerly called the `anon` key) is still needed to make client API requests. Find it under your project's **Connect** dialog or **Settings → API Keys**. Do not put a `service_role` or secret key in browser code or GitHub. User-owned data must remain protected by the included row-level security policies.
+Musick is configured to use this Supabase project with its public publishable key in [`supabase-config.js`](./supabase-config.js). The app supports email/password sign-up and sign-in; Supabase Auth sessions are kept in browser local storage and refreshed as needed. After signing in, playlist metadata (name, color, track metadata, and ordered track IDs) is synchronized. Audio blobs, local lyrics, and listening history remain on the device. Tracks present in a synced playlist but not on this device appear as cloud-only playlist entries and cannot be played until their audio is added locally.
+
+The publishable key is intended for use in client apps. Never put a `service_role` or secret key in browser code or GitHub. User-owned data is protected by the included row-level security policies.
 
 Playlist exports and imports operate on track filenames already present in the local library; they do not transfer audio between services. Local audio and listening history are not synced or uploaded.
 

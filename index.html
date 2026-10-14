@@ -7,6 +7,7 @@
     <meta name="description" content="Musick — your music, on your terms.">
     <title>Musick</title>
     <link rel="stylesheet" href="styles.css">
+    <script src="supabase-config.js" defer></script>
     <script src="app.js" defer></script>
   </head>
   <body>
@@ -39,7 +40,7 @@
             <input id="search-input" type="search" placeholder="What do you want to play?" autocomplete="off" aria-label="Search your music">
             <kbd>/</kbd>
           </label>
-          <button class="profile-button" data-action="connections"><span class="profile-avatar">M</span><span>Connect services</span></button>
+          <button class="profile-button" data-action="connections"><span class="profile-avatar">M</span><span id="profile-label">Connect services</span></button>
         </header>
 
         <section id="content" class="content-area" aria-live="polite"></section>
