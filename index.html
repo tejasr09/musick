@@ -108,7 +108,7 @@
       <div id="toast" class="toast" role="status" aria-live="polite"></div>
       <input id="audio-files" type="file" accept="audio/*,.mp3,.flac,.wav,.m4a,.ogg,.opus,.aac" multiple hidden>
       <input id="playlist-file" type="file" accept=".m3u,.m3u8,text/plain" hidden>
-      <input id="lyrics-file" type="file" accept=".lrc,text/plain" hidden>
+      <input id="lyrics-file" type="file" accept=".lrc,.txt,text/plain" hidden>
     </div>
 
     <section id="lyrics-view" class="lyrics-view" aria-hidden="true">
@@ -127,10 +127,13 @@
           <a id="lyrics-artwork-source" class="lyrics-artwork-source" target="_blank" rel="noopener noreferrer" hidden>Artwork source</a>
           <div id="lyrics-lines" class="lyrics-lines"></div>
           <div class="lyrics-actions">
-            <button class="secondary-button" data-action="add-lyrics">＋ Add .lrc lyrics</button>
-            <button class="secondary-button" data-action="verify-lyrics">Verify with Musixmatch</button>
+            <button class="secondary-button" data-action="edit-lyrics">Edit / add lyrics</button>
+            <button class="secondary-button" data-action="add-lyrics">Load lyrics file</button>
+            <button class="secondary-button" data-action="lookup-genius">Find song on Genius</button>
           </div>
-          <p class="lyrics-disclaimer">Artwork lookup searches Apple Music using the track name and artist; audio stays on this device. Lyrics are supplied by you. Musixmatch verification requires its approved API access.</p>
+          <p id="genius-status" class="lyrics-artwork-status" aria-live="polite">Genius song matching requires a signed-in account and a configured server endpoint.</p>
+          <a id="genius-song-link" class="lyrics-artwork-source" target="_blank" rel="noopener noreferrer" hidden>Open song on Genius</a>
+          <p class="lyrics-disclaimer">Genius lookup returns song metadata and a link only; Musick never reads or displays Genius lyrics. Add only lyrics you have permission to use. Alignment runs locally and creates an editable timing draft.</p>
         </div>
       </div>
       <section class="lyrics-player" aria-label="Full screen music controls">
@@ -146,6 +149,29 @@
         </div>
       </section>
     </section>
+    <dialog id="lyrics-editor-dialog" class="lyrics-editor-dialog" aria-labelledby="lyrics-editor-heading">
+      <form id="lyrics-editor-form">
+        <span class="eyebrow">LOCAL LYRICS</span>
+        <h2 id="lyrics-editor-heading">Edit lyrics</h2>
+        <label for="lyrics-editor-text">Paste or edit lyrics you have permission to use</label>
+        <textarea id="lyrics-editor-text" rows="8" maxlength="50000" placeholder="Paste lyrics here, one line per row…"></textarea>
+        <div class="lyrics-editor-actions">
+          <button class="secondary-button" type="button" data-action="estimate-word-timings">Estimate word timings</button>
+          <button class="secondary-button" type="button" data-action="load-lyrics-editor-file">Load text or .lrc</button>
+          <button class="secondary-button" type="button" data-action="import-word-lyrics">Import word timings</button>
+          <button class="secondary-button" type="button" data-action="export-lrc">Export .lrc</button>
+          <button class="secondary-button" type="button" data-action="export-word-lyrics">Export word timings</button>
+        </div>
+        <p id="lyrics-editor-status" class="lyrics-editor-status" role="status">Lyrics and audio stay in this browser. Word timing estimates are a draft; adjust them before saving.</p>
+        <div id="word-lyrics-draft" class="word-lyrics-draft"></div>
+        <div class="lyrics-editor-actions lyrics-editor-footer">
+          <button class="secondary-button" type="button" data-action="close-lyrics-editor">Cancel</button>
+          <button class="primary-button" type="submit">Save lyrics</button>
+        </div>
+      </form>
+    </dialog>
+    <input id="lyrics-editor-file" type="file" accept=".lrc,.txt,text/plain" hidden>
+    <input id="word-lyrics-file" type="file" accept=".json,application/json" hidden>
     <dialog id="track-edit-dialog" class="track-edit-dialog" aria-labelledby="track-edit-heading">
       <form id="track-edit-form">
         <span class="eyebrow">LOCAL LIBRARY</span>

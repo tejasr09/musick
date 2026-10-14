@@ -1,1 +1,4 @@
 project_id = "bqkneymsteutfvcevwfu"
+
+[functions.genius-song-lookup]
+verify_jwt = true

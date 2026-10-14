@@ -49,7 +49,8 @@ This container is only available while Docker is running on your computer; it do
 - Search your local tracks and get on-device recommendations based on your own favorites and listening history.
 - Search YouTube videos through the official API when configured, paste a YouTube video link without an API key, or search Internet Archive audio without an API key. YouTube and Archive playback stay in their respective official embedded players.
 - Adjust volume, shuffle and repeat, seek through tracks, favorite songs, and use the five-band Web Audio equalizer with genre and listening presets.
-- Display synchronized lyrics from a user-supplied `.lrc` file and use the lyrics view as a full-screen player with a moving background colored from the matching cover art (or the local generated cover when none is found).
+- Display line-synchronized lyrics from a user-supplied `.lrc` file, or paste/edit permitted lyrics and import `.txt` files. Optional word-timing drafts can be adjusted before saving and exported in Musick's JSON companion format; audio and lyrics remain on-device. The lyrics view also works as a full-screen player with a moving background colored from the matching cover art (or local generated cover).
+- Optionally find a matching song on Genius and open its song page. Musick uses the official Genius API for song metadata and links only; it never scrapes, retrieves, stores, or displays Genius lyrics.
 - Use keyboard `/` to focus search.
 
 Local audio files stay on the device and are never uploaded. Musick tries native browser playback first. A local WebAssembly fallback handles ALAC-in-M4A in 16-bit or 24-bit mono/stereo and retains its PCM bit depth, and AAC-LC-in-M4A in mono/stereo, decoded to 32-bit float WAV at the source sample rate. Float PCM avoids an additional 16-bit conversion; it does not restore information lost in lossy AAC. AAC fallback is limited to Symphonia's AAC-LC profile; other AAC profiles and M4A codecs are not supported by the fallback. Decoder input is capped at 512 MB and decoded WAV output at 256 MB. Unsupported files are reported rather than silently treated as playable. If Web Audio/equalizer setup is unavailable, local playback falls back to the browser's direct audio path. Browser audio processing and the equalizer do not promise bit-perfect output.
@@ -73,7 +74,7 @@ Musick currently plays local files; it does **not** log in to or stream from Spo
 - **Spotify:** Its Web API can provide some account and playlist metadata to an authorized app. It does not grant an independent app unrestricted, lossless playback of subscription tracks or a general-purpose subscription verification endpoint.
 - **Apple Music:** MusicKit offers an official integration path, subject to Apple developer-token setup, user permission, regional availability, and MusicKit's playback and subscription rules.
 - **YouTube Music:** Google does not offer a general public YouTube Music API for third-party account access and subscription playback. Optional online video search uses the separate YouTube Data API and YouTube's official embedded player. It does not access YouTube Music accounts or subscriptions, pass YouTube audio through Musick's audio player, or guarantee any particular audio quality.
-- **Musixmatch:** Lyrics lookup or verification must be implemented through an approved Musixmatch API agreement and credentials. Musick does not claim lyrics are verified; its lyrics feature plays user-provided `.lrc` files.
+- **Musixmatch:** Lyrics lookup or verification must be implemented through an approved Musixmatch API agreement and credentials. Musick does not claim lyrics are verified; its lyrics feature displays user-provided text, `.lrc`, or locally timed lyrics.
 
 The connection screen describes these dependencies. Do not ask users to enter their third-party passwords into Musick.
 
@@ -127,6 +128,26 @@ Musick is configured to use this Supabase project with its public publishable ke
 The publishable key is intended for use in client apps. Never put a `service_role` or secret key in browser code or GitHub. User-owned data is protected by the included row-level security policies.
 
 Playlist exports and imports operate on track filenames already present in the local library; they do not transfer audio between services. Local audio and listening history are not synced or uploaded.
+
+### Optional Genius song links
+
+The Genius feature is an authenticated, metadata-only song match. It sends the selected track's title and artist to a Supabase Edge Function, which calls the official Genius API and returns only the matched song title, artist, and Genius page URL. Lyrics are never requested or imported. Users must be signed in to Musick to invoke the function.
+
+To enable it, create a Genius API client and obtain its API access token in Genius developer settings. Never put this token in `app.js`, `supabase-config.js`, a checked-in config file, or the Docker image. Store it as a Supabase Edge Function secret and deploy the function:
+
+```powershell
+supabase login
+supabase secrets set GENIUS_ACCESS_TOKEN=YOUR_GENIUS_ACCESS_TOKEN --project-ref bqkneymsteutfvcevwfu
+supabase functions deploy genius-song-lookup --project-ref bqkneymsteutfvcevwfu
+```
+
+Alternatively, set `GENIUS_ACCESS_TOKEN` under **Supabase Dashboard → Edge Functions → Secrets**, then deploy `supabase/functions/genius-song-lookup`. The function requires a valid Supabase user session (`verify_jwt = true`). Without the secret or a deployed function, the UI reports that Genius lookup is unavailable; local playback and lyrics continue to work. Do not assume a Genius match or page grants permission to reuse lyrics.
+
+### Editing and word-synchronized lyrics
+
+In the lyrics view, choose **Edit / add lyrics** to paste or edit text, or load a local `.txt`/`.lrc` file. Existing `.lrc` line timestamps continue to import and export as ordinary LRC. **Estimate word timings** creates an on-device editable draft spread across the selected track's duration, with longer words allocated slightly more time. It is a rough duration-based estimate, not speech recognition or audio analysis; review and adjust each timestamp before saving. No audio or lyrics are uploaded for alignment.
+
+Saved word timing is stored with that local track in IndexedDB. **Export word timings** creates a `.musick-lyrics.json` companion file with `format: "musick-word-lyrics"` and `version: 1`; it can be re-imported using **Import word timings**. It contains the lyric text and timestamps, so share it only if you have permission. Exporting `.lrc` from word-timed lyrics keeps line-level timing using each line's first word timestamp; word-level timing is available only in the companion JSON. Plain text lyrics have no synchronization until timing is added.
 
 ## GitHub
 

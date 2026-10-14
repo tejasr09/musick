@@ -65,6 +65,7 @@ let archiveSearch = { status: "idle", results: [], error: "", query: "", selecte
 let archiveSearchController;
 let archiveSearchRequest = 0;
 let artworkLookupRequest = 0;
+let geniusLookupRequest = 0;
 let editingTrackId = null;
 let toastTimer;
 let currentObjectUrl = null;
@@ -74,6 +75,9 @@ let gainNode;
 let filters = [];
 let audioGraphWarningShown = false;
 let lyricsEntries = [];
+let wordLyricsDraft = null;
+let lyricsActiveCue = "";
+let lyricsEditorLineTimes = null;
 let historyStack = [{ view: "home", playlistId: null }];
 let historyIndex = 0;
 const supabaseConfig = window.MUSICK_SUPABASE;
@@ -1333,6 +1337,11 @@ async function playTrack(id, collection = tracks) {
     nextUrl = URL.createObjectURL(playbackBlobForTrack(track));
     audio.src = nextUrl;
     currentTrackId = id;
+    lyricsEntries = [];
+    lyricsActiveCue = "";
+    geniusLookupRequest++;
+    document.querySelector("#genius-song-link").hidden = true;
+    document.querySelector("#genius-status").textContent = "Genius song matching requires a signed-in account and a configured server endpoint.";
     void lookupTrackArtwork(track);
     const playRequest = audio.play();
     currentObjectUrl = nextUrl;
@@ -1548,11 +1557,34 @@ function updateLyricsDisplay() {
   const heading = document.querySelector("#lyrics-song-title");
   if (!track) {
     heading.textContent = "Your music, your words.";
-    container.innerHTML = `<p class="recommendation-note">Start playing a song from your library. Add a timed .lrc lyrics file if you have one.</p>`;
+    container.innerHTML = `<p class="recommendation-note">Start playing a song from your library. Add your own text or timed .lrc lyrics.</p>`;
     return;
   }
-  if (!track.lyrics) {
-    container.innerHTML = `<p class="recommendation-note">No local lyrics for this song yet. Add your own timed .lrc file below.</p>`;
+  if (!track.lyrics && !track.wordLyrics?.length) {
+    container.innerHTML = `<p class="recommendation-note">No local lyrics for this song yet. Add or import text, or load a timed .lrc file.</p>`;
+    return;
+  }
+  if (Array.isArray(track.wordLyrics) && track.wordLyrics.length) {
+    let activeWord = null;
+    track.wordLyrics.forEach((line, lineIndex) => {
+      line.words.forEach((word, wordIndex) => {
+        if (word.time <= audio.currentTime && (!activeWord || word.time > activeWord.time)) {
+          activeWord = { lineIndex, wordIndex, time: word.time };
+        }
+      });
+    });
+    container.innerHTML = track.wordLyrics.map((line, lineIndex) => {
+      const lineActive = activeWord?.lineIndex === lineIndex;
+      return `<div class="lyric-line ${lineActive ? "active" : ""}">${line.words.map((word, wordIndex) => {
+        const active = lineActive && activeWord.wordIndex === wordIndex;
+        return `<button class="lyric-word ${active ? "active" : ""}" data-lyric-time="${word.time}" aria-label="Seek to ${escapeHTML(word.text)}">${escapeHTML(word.text)}</button>`;
+      }).join(" ")}</div>`;
+    }).join("");
+    const cue = activeWord ? `word:${activeWord.lineIndex}:${activeWord.wordIndex}` : "word:none";
+    if (cue !== lyricsActiveCue) {
+      lyricsActiveCue = cue;
+      container.querySelector(".lyric-word.active")?.scrollIntoView({ block: "center", behavior: "smooth" });
+    }
     return;
   }
   if (!lyricsEntries.length || lyricsEntries.trackId !== track.id) {
@@ -1560,7 +1592,9 @@ function updateLyricsDisplay() {
     lyricsEntries.trackId = track.id;
   }
   if (!lyricsEntries.length) {
-    container.innerHTML = `<p class="recommendation-note">This .lrc file has no timed lyrics. Check the file and try again.</p>`;
+    container.innerHTML = track.lyrics.split(/\r?\n/).filter(line => line.trim()).map(line =>
+      `<p class="lyric-line">${escapeHTML(line.trim())}</p>`
+    ).join("") || `<p class="recommendation-note">This file has no readable lyrics. Edit the lyrics or try another file.</p>`;
     return;
   }
   let activeIndex = -1;
@@ -1569,8 +1603,178 @@ function updateLyricsDisplay() {
     else break;
   }
   container.innerHTML = lyricsEntries.map((entry, index) => `<button class="lyric-line ${index === activeIndex ? "active" : ""}" data-lyric-time="${entry.time}">${escapeHTML(entry.text)}</button>`).join("");
-  const activeLine = container.querySelector(".lyric-line.active");
-  if (activeLine) activeLine.scrollIntoView({ block: "center", behavior: "smooth" });
+  const cue = `line:${activeIndex}`;
+  if (cue !== lyricsActiveCue) {
+    lyricsActiveCue = cue;
+    container.querySelector(".lyric-line.active")?.scrollIntoView({ block: "center", behavior: "smooth" });
+  }
+}
+
+function getLyricsEditorTrack() {
+  const track = tracks.find(item => item.id === currentTrackId);
+  if (!track?.blob) throw new Error("Select a local library track before editing or aligning lyrics.");
+  return track;
+}
+
+function lyricsToText(lines) {
+  return lines.map(line => line.words.map(word => word.text).join(" ")).join("\n");
+}
+
+function normalizeWordLyrics(value, maxDuration) {
+  if (!value || value.format !== "musick-word-lyrics" || value.version !== 1 || !Array.isArray(value.lines)) {
+    throw new Error("This is not a supported Musick word-lyrics JSON file.");
+  }
+  const lines = value.lines.map(line => {
+    if (typeof line?.text !== "string" || !Array.isArray(line.words)) throw new Error("The word-lyrics file has an invalid line.");
+    const words = line.words.map(word => {
+      const time = Number(word?.time);
+      if (typeof word?.text !== "string" || !word.text.trim() || !Number.isFinite(time) || time < 0) {
+        throw new Error("The word-lyrics file has an invalid word or timestamp.");
+      }
+      if (maxDuration > 0 && time > maxDuration) throw new Error("A word timestamp exceeds this track's duration.");
+      return { text: word.text, time };
+    });
+    return { text: words.map(word => word.text).join(" "), words };
+  });
+  if (!lines.length || lines.some(line => !line.words.length)) throw new Error("The word-lyrics file contains no timed words.");
+  return lines;
+}
+
+function renderWordLyricsDraft(lines) {
+  wordLyricsDraft = lines;
+  const trackDuration = Number(getLyricsEditorTrack().duration);
+  const maxTime = Number.isFinite(audio.duration) && audio.duration > 0
+    ? audio.duration
+    : trackDuration > 0 ? trackDuration : Math.max(0, ...lines.flatMap(line => line.words.map(word => word.time)));
+  document.querySelector("#word-lyrics-draft").innerHTML = lines.map((line, lineIndex) =>
+    `<div class="word-draft-line"><span class="word-draft-text">${escapeHTML(line.text)}</span><div class="word-draft-items">${line.words.map((word, wordIndex) =>
+      `<label class="word-draft-item"><span>${escapeHTML(word.text)}</span><input type="number" min="0" max="${Math.max(0, maxTime)}" step="0.01" value="${word.time.toFixed(2)}" data-word-time data-line="${lineIndex}" data-word="${wordIndex}" aria-label="Time for ${escapeHTML(word.text)} in seconds"></label>`
+    ).join("")}</div></div>`
+  ).join("");
+}
+
+function estimateSyllables(word) {
+  const plain = word.toLowerCase().replace(/[^a-z]/g, "");
+  if (!plain) return 1;
+  const groups = plain.match(/[aeiouy]+/g)?.length || 1;
+  return Math.max(1, groups - (plain.length > 3 && /e$/.test(plain) && !/le$/.test(plain) ? 1 : 0));
+}
+
+function estimateWordTimings() {
+  const track = getLyricsEditorTrack();
+  const duration = Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : Number(track.duration);
+  if (!Number.isFinite(duration) || duration <= 0) {
+    throw new Error("Track duration is unavailable. Play or load this local track, then try again.");
+  }
+  const sourceLines = document.querySelector("#lyrics-editor-text").value.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+  if (!sourceLines.length) throw new Error("Add lyrics before estimating word timings.");
+  const tokens = sourceLines.map(text => ({ text, words: text.split(/\s+/).filter(Boolean) }));
+  const lines = tokens.map(line => ({ text: line.text, words: [] }));
+  const useLineCues = lyricsEditorLineTimes?.length === tokens.length;
+  const wordWeights = tokens.map(line => line.words.map(text =>
+    estimateSyllables(text) + (/[,.!?;:]$/.test(text) ? 0.35 : 0)
+  ));
+  const lineWeights = wordWeights.map(weights => weights.reduce((sum, weight) => sum + weight, 0));
+  const totalWeight = lineWeights.reduce((sum, weight) => sum + weight, 0);
+  let elapsed = 0;
+  tokens.forEach((line, lineIndex) => {
+    const lineStart = useLineCues ? Math.max(0, lyricsEditorLineTimes[lineIndex]) : Math.min(0.5, duration * 0.02) + duration * elapsed / totalWeight;
+    const nextCue = useLineCues ? lyricsEditorLineTimes.slice(lineIndex + 1).find(time => time > lineStart) : null;
+    const lineEnd = useLineCues ? Math.min(duration, nextCue ?? duration) : Math.min(duration, Math.min(0.5, duration * 0.02) + duration * (elapsed + lineWeights[lineIndex]) / totalWeight);
+    const span = Math.max(0, lineEnd - lineStart);
+    const weightTotal = lineWeights[lineIndex] || 1;
+    let lineElapsed = 0;
+    line.words.forEach((text, wordIndex) => {
+      const weight = wordWeights[lineIndex][wordIndex];
+      lines[lineIndex].words.push({ text, time: Math.min(duration, lineStart + span * lineElapsed / weightTotal) });
+      lineElapsed += weight;
+    });
+    elapsed += lineWeights[lineIndex];
+  });
+  renderWordLyricsDraft(lines);
+  document.querySelector("#lyrics-editor-status").textContent =
+    "Draft only: word times are spread across this track's duration, not speech-detected. Audio and lyrics stayed on this device; adjust the timestamps before saving.";
+}
+
+function openLyricsEditor() {
+  const track = getLyricsEditorTrack();
+  const dialog = document.querySelector("#lyrics-editor-dialog");
+  const savedLrcEntries = track.lyrics ? parseLrc(track.lyrics) : [];
+  lyricsEditorLineTimes = savedLrcEntries.length ? savedLrcEntries.map(entry => entry.time) : null;
+  document.querySelector("#lyrics-editor-text").value = savedLrcEntries.length
+    ? savedLrcEntries.map(entry => entry.text).join("\n")
+    : track.lyrics || (track.wordLyrics ? lyricsToText(track.wordLyrics) : "");
+  wordLyricsDraft = track.wordLyrics ? structuredClone(track.wordLyrics) : null;
+  if (wordLyricsDraft) renderWordLyricsDraft(wordLyricsDraft);
+  else document.querySelector("#word-lyrics-draft").innerHTML = "";
+  document.querySelector("#lyrics-editor-status").textContent =
+    "Lyrics and audio stay in this browser. Word timing estimates are a draft; adjust them before saving.";
+  if (!dialog.open) dialog.showModal();
+}
+
+function downloadWordLyrics(track, lines) {
+  const documentData = {
+    format: "musick-word-lyrics",
+    version: 1,
+    track: { title: track.title, artist: track.artist },
+    lines
+  };
+  downloadText(`${track.title || "lyrics"}.musick-lyrics.json`, JSON.stringify(documentData, null, 2));
+}
+
+function formatLrc(entries) {
+  return entries.map(entry => {
+    const minutes = Math.floor(entry.time / 60);
+    const seconds = (entry.time % 60).toFixed(3).padStart(6, "0");
+    return `[${String(minutes).padStart(2, "0")}:${seconds}]${entry.text}`;
+  }).join("\n");
+}
+
+function exportTrackLrc(track, text, wordLines = track.wordLyrics) {
+  let entries = parseLrc(text);
+  if (!entries.length && wordLines?.length) {
+    entries = wordLines.map(line => ({ time: line.words[0].time, text: line.text })).sort((a, b) => a.time - b.time);
+  }
+  if (!entries.length) throw new Error("There are no timed lyric lines to export as .lrc.");
+  downloadText(`${track.title || "lyrics"}.lrc`, formatLrc(entries));
+}
+
+async function lookupGeniusSong() {
+  const status = document.querySelector("#genius-status");
+  const link = document.querySelector("#genius-song-link");
+  const track = tracks.find(item => item.id === currentTrackId);
+  const request = ++geniusLookupRequest;
+  link.hidden = true;
+  link.removeAttribute("href");
+  if (!track) { status.textContent = "Play a local track before searching Genius."; return; }
+  if (!authSession) { status.textContent = "Sign in to Musick to use the optional Genius lookup."; return; }
+  status.textContent = "Searching Genius for song metadata…";
+  try {
+    if (!(await ensureAuthSession())) {
+      if (request !== geniusLookupRequest || track.id !== currentTrackId) return;
+      status.textContent = "Your Musick session expired. Sign in again to use Genius lookup.";
+      return;
+    }
+    if (request !== geniusLookupRequest || track.id !== currentTrackId) return;
+    const result = await supabaseFetch("/functions/v1/genius-song-lookup", {
+      method: "POST",
+      body: JSON.stringify({ title: track.title, artist: track.artist })
+    });
+    if (request !== geniusLookupRequest || track.id !== currentTrackId) return;
+    if (!result?.song?.url || !/^https:\/\/genius\.com\//i.test(result.song.url)) {
+      status.textContent = "No matching Genius song was found. Your local lyrics and playback are unchanged.";
+      return;
+    }
+    link.href = result.song.url;
+    link.textContent = `Open ${result.song.title} by ${result.song.artist} on Genius`;
+    link.hidden = false;
+    status.textContent = "Song match found. Genius provides the song page; lyrics are not imported.";
+  } catch (error) {
+    if (request !== geniusLookupRequest || track.id !== currentTrackId) return;
+    status.textContent = error.message.includes("Failed to fetch")
+      ? "Genius lookup is unavailable or not configured. Local playback and lyrics remain available."
+      : `Genius lookup unavailable: ${error.message}`;
+  }
 }
 
 function openLyrics() {
@@ -1637,6 +1841,28 @@ async function handleAction(button) {
   }
   else if (action === "edit-track") openTrackEditor(id);
   else if (action === "close-track-edit") document.querySelector("#track-edit-dialog").close();
+  else if (action === "edit-lyrics") {
+    try { openLyricsEditor(); }
+    catch (error) { showToast(error.message); }
+  }
+  else if (action === "estimate-word-timings") {
+    try { estimateWordTimings(); }
+    catch (error) { document.querySelector("#lyrics-editor-status").textContent = error.message; }
+  }
+  else if (action === "load-lyrics-editor-file") document.querySelector("#lyrics-editor-file").click();
+  else if (action === "import-word-lyrics") document.querySelector("#word-lyrics-file").click();
+  else if (action === "close-lyrics-editor") document.querySelector("#lyrics-editor-dialog").close();
+  else if (action === "export-lrc") {
+    try { exportTrackLrc(getLyricsEditorTrack(), document.querySelector("#lyrics-editor-text").value, wordLyricsDraft); }
+    catch (error) { document.querySelector("#lyrics-editor-status").textContent = error.message; }
+  }
+  else if (action === "export-word-lyrics") {
+    try {
+      if (!wordLyricsDraft?.length) throw new Error("Estimate or import word timings before exporting.");
+      downloadWordLyrics(getLyricsEditorTrack(), wordLyricsDraft);
+    } catch (error) { document.querySelector("#lyrics-editor-status").textContent = error.message; }
+  }
+  else if (action === "lookup-genius") lookupGeniusSong();
   else if (action === "delete-track") {
     const track = tracks.find(item => item.id === id);
     if (!track || !window.confirm(`Remove "${track.title}" from your library and playlists on this device? The original audio file on your device will not be deleted.`)) return;
@@ -1758,7 +1984,10 @@ async function handleAction(button) {
   else if (action === "fullscreen") toggleFullscreen();
   else if (action === "add-lyrics") {
     if (!currentTrackId) { showToast("Play a track before adding lyrics."); return; }
-    document.querySelector("#lyrics-file").click();
+    try {
+      getLyricsEditorTrack();
+      document.querySelector("#lyrics-file").click();
+    } catch (error) { showToast(error.message); }
   }
   else if (action === "verify-lyrics") showToast("Musixmatch verification is not active; approved API credentials and licensing are required.");
   else if (action === "toggle-equalizer") {
@@ -1935,14 +2164,106 @@ document.querySelector("#playlist-file").addEventListener("change", async event 
 document.querySelector("#lyrics-file").addEventListener("change", async event => {
   const [file] = event.target.files;
   const track = tracks.find(item => item.id === currentTrackId);
-  if (file && track) {
+  if (file && track?.blob) {
     try {
       track.lyrics = await file.text();
+      track.wordLyrics = undefined;
       await persistTrack(track);
       lyricsEntries = [];
+      lyricsActiveCue = "";
       updateLyricsDisplay();
-      showToast("Local lyrics added for this track.");
+      showToast("Local lyrics added for this track. Use Edit / add lyrics to adjust them.");
     } catch (error) { showToast(`Could not save lyrics: ${error.message}`); }
+  }
+  event.target.value = "";
+});
+
+document.querySelector("#lyrics-editor-text").addEventListener("input", () => {
+  wordLyricsDraft = null;
+  lyricsEditorLineTimes = null;
+  document.querySelector("#word-lyrics-draft").innerHTML = "";
+  document.querySelector("#lyrics-editor-status").textContent = "Lyrics changed. Re-estimate or import word timings to create a matching draft.";
+});
+
+document.querySelector("#word-lyrics-draft").addEventListener("input", event => {
+  const input = event.target.closest("[data-word-time]");
+  if (!input || !wordLyricsDraft) return;
+  const line = wordLyricsDraft[Number(input.dataset.line)];
+  const word = line?.words[Number(input.dataset.word)];
+  const time = Number(input.value);
+  const duration = Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : Number(getLyricsEditorTrack().duration);
+  if (!word || !Number.isFinite(time) || time < 0 || (duration > 0 && time > duration)) {
+    input.setCustomValidity("Enter a time within the track duration.");
+    input.reportValidity();
+    return;
+  }
+  input.setCustomValidity("");
+  word.time = time;
+});
+
+document.querySelector("#lyrics-editor-form").addEventListener("submit", async event => {
+  event.preventDefault();
+  try {
+    const track = getLyricsEditorTrack();
+    const lyrics = document.querySelector("#lyrics-editor-text").value.trim();
+    if (!lyrics) throw new Error("Add lyrics before saving.");
+    if (wordLyricsDraft && lyricsToText(wordLyricsDraft) !== lyrics) {
+      throw new Error("Lyrics changed after timing. Re-estimate word timings before saving.");
+    }
+    const textLines = lyrics.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+    if (!wordLyricsDraft && lyricsEditorLineTimes?.length) {
+      if (textLines.length !== lyricsEditorLineTimes.length) {
+        throw new Error("This .lrc has line timings. Keep the same number of lyric lines or estimate word timings before saving.");
+      }
+      track.lyrics = formatLrc(textLines.map((text, index) => ({ time: lyricsEditorLineTimes[index], text })));
+    } else {
+      track.lyrics = lyrics;
+    }
+    track.wordLyrics = wordLyricsDraft?.length ? wordLyricsDraft : undefined;
+    await persistTrack(track);
+    lyricsEntries = [];
+    lyricsActiveCue = "";
+    lyricsEditorLineTimes = null;
+    document.querySelector("#lyrics-editor-dialog").close();
+    updateLyricsDisplay();
+    showToast("Local lyrics saved.");
+  } catch (error) {
+    document.querySelector("#lyrics-editor-status").textContent = error.message;
+  }
+});
+
+document.querySelector("#lyrics-editor-file").addEventListener("change", async event => {
+  const [file] = event.target.files;
+  if (file) {
+    try {
+      const text = await file.text();
+      const lrcEntries = /\.lrc$/i.test(file.name) ? parseLrc(text) : [];
+      lyricsEditorLineTimes = lrcEntries.length ? lrcEntries.map(entry => entry.time) : null;
+      document.querySelector("#lyrics-editor-text").value = lrcEntries.length
+        ? lrcEntries.map(entry => entry.text).join("\n")
+        : text;
+      wordLyricsDraft = null;
+      document.querySelector("#word-lyrics-draft").innerHTML = "";
+      document.querySelector("#lyrics-editor-status").textContent = lrcEntries.length
+        ? "LRC lines loaded locally. Estimate word timings to use the existing line cues as a starting point."
+        : "File loaded locally. Save the lyrics or estimate word timings.";
+    } catch (error) { document.querySelector("#lyrics-editor-status").textContent = `Could not read lyrics file: ${error.message}`; }
+  }
+  event.target.value = "";
+});
+
+document.querySelector("#word-lyrics-file").addEventListener("change", async event => {
+  const [file] = event.target.files;
+  if (file) {
+    try {
+      const data = JSON.parse(await file.text());
+      const trackDuration = Number(getLyricsEditorTrack().duration);
+      const lines = normalizeWordLyrics(data, Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : trackDuration);
+      lyricsEditorLineTimes = null;
+      document.querySelector("#lyrics-editor-text").value = lyricsToText(lines);
+      renderWordLyricsDraft(lines);
+      document.querySelector("#lyrics-editor-status").textContent = "Word timings imported as an editable local draft. Review before saving.";
+    } catch (error) { document.querySelector("#lyrics-editor-status").textContent = `Could not import word timings: ${error.message}`; }
   }
   event.target.value = "";
 });

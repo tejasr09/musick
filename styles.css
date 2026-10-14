@@ -335,6 +335,25 @@ body.fullscreen-lyrics .lyrics-copy { text-shadow: 0 2px 18px rgba(0,0,0,.35); }
 .track-edit-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 5px; }
 .track-edit-dialog button:disabled { cursor: progress; opacity: .65; }
 .track-edit-dialog:not([open]) { display: none; }
+.lyric-word { padding: 0; border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+.lyric-word.active { color: #fff; text-shadow: 0 0 18px #b996f5; }
+.lyrics-editor-dialog { width: min(820px,calc(100% - 28px)); max-height: min(90dvh,900px); padding: 0; border: 1px solid rgba(255,255,255,.12); border-radius: 15px; background: #17151e; color: #f5f3f8; box-shadow: 0 24px 90px #000b; }
+.lyrics-editor-dialog::backdrop { background: rgba(5,4,8,.72); backdrop-filter: blur(5px); }
+.lyrics-editor-dialog form { display: grid; max-height: inherit; gap: 11px; padding: 23px; overflow-y: auto; }
+.lyrics-editor-dialog h2 { margin: 0 0 4px; font-size: 19px; letter-spacing: -.5px; }
+.lyrics-editor-dialog label { color: #c6c0cf; font-size: 11px; }
+.lyrics-editor-dialog textarea { width: 100%; min-height: 145px; resize: vertical; padding: 11px; border: 1px solid var(--line); border-radius: 7px; background: #100f15; color: #f5f3f8; font: inherit; font-size: 12px; line-height: 1.6; }
+.lyrics-editor-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.lyrics-editor-status { margin: 0; color: #aaa1b4; font-size: 10px; line-height: 1.5; }
+.word-lyrics-draft { display: grid; max-height: 32vh; gap: 11px; overflow-y: auto; }
+.word-draft-line { display: grid; gap: 7px; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: #100f15; }
+.word-draft-text { color: #f5f3f8; font-size: 11px; line-height: 1.5; }
+.word-draft-items { display: flex; flex-wrap: wrap; gap: 6px; }
+.word-draft-item { display: grid; gap: 3px; min-width: 76px; padding: 5px; border: 1px solid rgba(255,255,255,.07); border-radius: 6px; background: #17151e; }
+.word-draft-item span { max-width: 130px; overflow: hidden; color: #c6c0cf; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.lyrics-editor-dialog .word-draft-item input { width: 74px; padding: 3px 5px; border: 1px solid var(--line); border-radius: 4px; background: #100f15; color: #f5f3f8; font: inherit; font-size: 10px; }
+.lyrics-editor-footer { justify-content: flex-end; padding-top: 4px; }
+.lyrics-editor-dialog:not([open]) { display: none; }
 @media (prefers-reduced-motion: reduce) {
   .lyrics-view::before, .lyrics-view::after { animation: none; }
 }
