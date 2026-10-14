@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#0b0a10">
+    <meta name="description" content="Musick — your music, on your terms.">
+    <title>Musick</title>
+    <link rel="stylesheet" href="styles.css">
+    <script src="app.js" defer></script>
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <a class="wordmark" href="#" aria-label="Musick home"><span class="brand-mark">m</span>musick<span class="brand-period">.</span></a>
+        <nav class="primary-nav" aria-label="Main navigation">
+          <button class="nav-link active" data-view="home"><span class="nav-icon">⌂</span>Home</button>
+          <button class="nav-link" data-view="search"><span class="nav-icon">⌕</span>Search</button>
+          <button class="nav-link" data-view="library"><span class="nav-icon">▤</span>Your library</button>
+        </nav>
+        <div class="sidebar-section">
+          <div class="section-label"><span>Your playlists</span><button class="icon-button small" data-action="create-playlist" aria-label="Create playlist" title="Create playlist">＋</button></div>
+          <div id="sidebar-playlists" class="playlist-nav"></div>
+        </div>
+        <div class="sidebar-bottom">
+          <span class="local-badge"><span></span> Your library stays on this device</span>
+          <span class="sidebar-version">Musick · open source</span>
+        </div>
+      </aside>
+
+      <main class="main-area">
+        <header class="topbar">
+          <div class="history-buttons">
+            <button class="round-button" aria-label="Go back" title="Go back" data-action="back">‹</button>
+            <button class="round-button" aria-label="Go forward" title="Go forward" data-action="forward">›</button>
+          </div>
+          <label class="search-box" id="search-box">
+            <span aria-hidden="true">⌕</span>
+            <input id="search-input" type="search" placeholder="What do you want to play?" autocomplete="off" aria-label="Search your music">
+            <kbd>/</kbd>
+          </label>
+          <button class="profile-button" data-action="connections"><span class="profile-avatar">M</span><span>Connect services</span></button>
+        </header>
+
+        <section id="content" class="content-area" aria-live="polite"></section>
+      </main>
+
+        <section id="equalizer" class="equalizer" aria-label="Audio equalizer">
+          <button class="equalizer-toggle" data-action="toggle-equalizer" aria-expanded="false" aria-controls="equalizer-panel">
+            <span class="eq-glyph" aria-hidden="true">≋</span><span>Equalizer</span><span class="eq-chevron">⌃</span>
+          </button>
+          <div id="equalizer-panel" class="equalizer-panel" hidden>
+            <div class="eq-panel-heading"><div><span class="eyebrow">YOUR SOUND</span><h2>Equalizer</h2></div><button class="icon-button small" data-action="reset-eq" aria-label="Reset equalizer" title="Reset equalizer">↺</button></div>
+            <div class="eq-presets">
+              <label for="eq-preset" class="visually-hidden">Equalizer preset</label>
+              <select id="eq-preset"><option value="custom">Custom</option><option value="flat">Flat</option><option value="bass">Bass boost</option><option value="vocal">Vocal</option><option value="treble">Treble boost</option></select>
+            </div>
+            <div class="eq-sliders">
+              <label><input type="range" min="-12" max="12" value="0" data-band="0" aria-label="60 Hz equalizer band"><span>60</span><small>Hz</small></label>
+              <label><input type="range" min="-12" max="12" value="0" data-band="1" aria-label="230 Hz equalizer band"><span>230</span><small>Hz</small></label>
+              <label><input type="range" min="-12" max="12" value="0" data-band="2" aria-label="910 Hz equalizer band"><span>910</span><small>Hz</small></label>
+              <label><input type="range" min="-12" max="12" value="0" data-band="3" aria-label="3.6 kHz equalizer band"><span>3.6k</span><small>Hz</small></label>
+              <label><input type="range" min="-12" max="12" value="0" data-band="4" aria-label="14 kHz equalizer band"><span>14k</span><small>Hz</small></label>
+            </div>
+            <p class="eq-note">Applies to music playing in Musick.</p>
+          </div>
+        </section>
+
+        <section class="player" aria-label="Music player">
+        <div id="now-playing" class="now-playing"></div>
+        <div class="player-center">
+          <div class="transport">
+            <button class="player-button shuffle-button" data-action="shuffle" aria-label="Shuffle" title="Shuffle">⤨</button>
+            <button class="player-button" data-action="previous" aria-label="Previous track" title="Previous track">|‹</button>
+            <button class="play-button" data-action="play-pause" aria-label="Play" title="Play">▶</button>
+            <button class="player-button" data-action="next" aria-label="Next track" title="Next track">›|</button>
+            <button class="player-button repeat-button" data-action="repeat" aria-label="Repeat off" title="Repeat off">↻</button>
+          </div>
+          <div class="timeline">
+            <span id="current-time">0:00</span>
+            <input id="seek-bar" type="range" min="0" max="1000" value="0" aria-label="Seek through track">
+            <span id="duration-time">0:00</span>
+          </div>
+        </div>
+        <div class="player-tools">
+          <button class="player-button lyrics-button" data-action="open-lyrics" aria-label="Open lyrics" title="Lyrics">♫</button>
+          <span class="volume-icon" aria-hidden="true">◖</span>
+          <input id="volume-control" type="range" min="0" max="1" step="0.01" value="0.8" aria-label="Volume">
+          <button class="player-button queue-button" data-action="show-queue" aria-label="Open library" title="Your library">▤</button>
+        </div>
+        <audio id="audio" preload="metadata"></audio>
+      </section>
+
+      <div id="toast" class="toast" role="status" aria-live="polite"></div>
+      <input id="audio-files" type="file" accept="audio/*,.mp3,.flac,.wav,.m4a,.ogg,.opus,.aac" multiple hidden>
+      <input id="playlist-file" type="file" accept=".m3u,.m3u8,text/plain" hidden>
+      <input id="lyrics-file" type="file" accept=".lrc,text/plain" hidden>
+    </div>
+
+    <section id="lyrics-view" class="lyrics-view" aria-hidden="true">
+      <div class="lyrics-topbar">
+        <button class="round-button" data-action="close-lyrics" aria-label="Close lyrics">⌄</button>
+        <div class="lyrics-heading"><span class="eyebrow">NOW PLAYING</span><span id="lyrics-track-heading">Nothing playing</span></div>
+        <button class="lyrics-fullscreen" data-action="fullscreen" title="Full screen">⛶ <span>Full screen</span></button>
+      </div>
+      <div class="lyrics-content">
+        <div class="lyrics-art" id="lyrics-art"><span>m.</span></div>
+        <div class="lyrics-copy">
+          <span class="eyebrow">LYRICS</span>
+          <h1 id="lyrics-song-title">Your music, your words.</h1>
+          <p id="lyrics-artist"></p>
+          <div id="lyrics-lines" class="lyrics-lines"></div>
+          <div class="lyrics-actions">
+            <button class="secondary-button" data-action="add-lyrics">＋ Add .lrc lyrics</button>
+            <button class="secondary-button" data-action="verify-lyrics">Verify with Musixmatch</button>
+          </div>
+          <p class="lyrics-disclaimer">Lyrics are supplied by you. Musixmatch verification requires its approved API access.</p>
+        </div>
+      </div>
+      <section class="lyrics-player" aria-label="Full screen music controls">
+        <div class="lyrics-transport">
+          <button class="player-button" data-action="previous" aria-label="Previous track">|‹</button>
+          <button class="play-button" id="lyrics-play-button" data-action="play-pause" aria-label="Play">▶</button>
+          <button class="player-button" data-action="next" aria-label="Next track">›|</button>
+        </div>
+        <div class="lyrics-timeline">
+          <span id="lyrics-current-time">0:00</span>
+          <input id="lyrics-seek-bar" type="range" min="0" max="1000" value="0" aria-label="Seek through track">
+          <span id="lyrics-duration-time">0:00</span>
+        </div>
+      </section>
+    </section>
+  </body>
+</html>
